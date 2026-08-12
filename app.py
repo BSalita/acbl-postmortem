@@ -163,7 +163,7 @@ from mlBridge.mlBridgeAcblLib import (
     merge_clean_augment_club_dfs,
     merge_clean_augment_tournament_dfs,
 )
-import streamlitlib.streamlitlib as streamlitlib # must be placed after sys.path.append. vscode re-format likes to move this to the top
+import streamlitlib # must be placed after sys.path.append. vscode re-format likes to move this to the top
 from mlBridge.mlBridgeLib import pd_options_display, contract_classes, cast_numeric_display_columns # must be placed after sys.path.append. vscode re-format likes to move this to the top
 from mlBridge.mlBridgeAugmentLib import (
     AllAugmentations,
