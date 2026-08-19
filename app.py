@@ -270,6 +270,22 @@ def _normalize_session_id_arg(session_id: Any) -> Any:
     return session_id
 
 
+def save_augmented_df_to_cache(df: Any, session_id: Any, player_id: str) -> None:
+    """Persist the augmented postmortem dataframe for headless consumers
+    (acbl_postmortem_mcp_server.py), using the same cache naming as
+    ffbridge-postmortem. Write-only by design: the live app always re-augments
+    fresh (see the 'no caching' note in change_game_state) so this cache never
+    feeds back into the UI."""
+    try:
+        cache_dir = pathlib.Path('cache')
+        cache_dir.mkdir(exist_ok=True)
+        cache_file = cache_dir / f'df-{session_id}-{player_id}.parquet'
+        df.write_parquet(cache_file)
+        print_to_log_info(f"Saved postmortem cache {cache_file}: shape:{df.shape} size:{cache_file.stat().st_size}")
+    except Exception as e:
+        print_to_log_info(f"Unable to save postmortem cache for {session_id}-{player_id}: {e}")
+
+
 def change_game_state(player_id: str, session_id: str) -> None: # todo: rename to session_id?
     global acbl_api_key
 
@@ -405,6 +421,7 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
 
             # Always run fresh augmentation - no caching to prevent schema mismatch bugs
             df = augment_df(df)
+            save_augmented_df_to_cache(df, session_id, player_id)
             with open('df_columns.txt','w') as f:
                 for col in sorted(df.columns):
                     f.write(col+'\n')
@@ -478,6 +495,7 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
             print_to_log_info('merge_clean_augment_tournament_dfs time:', time.time()-t)
             #df = acbllib.convert_ffdf_to_mldf(df)
             df = augment_df(df)
+            save_augmented_df_to_cache(df, session_id, player_id)
             with open('df_columns.txt','w') as f:
                 for col in sorted(df.columns):
                     f.write(col+'\n')
