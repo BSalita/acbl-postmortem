@@ -155,14 +155,15 @@ for _p in _resolved_libs:
 
 # streamlitlib, mlBridge must be placed after sys.path.append. vscode re-format likes to move them to the top
 from mlBridge.mlBridgeAcblLib import (
-    get_club_results_from_acbl_number,
     get_tournament_sessions_from_acbl_number,
     get_tournament_session_results,
-    get_club_results_details_data,
     create_club_dfs,
     merge_clean_augment_club_dfs,
     merge_clean_augment_tournament_dfs,
 )
+# Club-results scraping now lives in the club API (src/acbl/acbl_club_api_server.py);
+# this client mirrors the old mlBridgeAcblLib return shapes over HTTP.
+import acbl_club_api_client as club_api
 import streamlitlib # must be placed after sys.path.append. vscode re-format likes to move this to the top
 from mlBridge.mlBridgeLib import pd_options_display, contract_classes, cast_numeric_display_columns # must be placed after sys.path.append. vscode re-format likes to move this to the top
 from mlBridge.mlBridgeAugmentLib import (
@@ -217,7 +218,8 @@ def ShowDataFrameTable(df: Any, key: str, query: Optional[str] = None, show_sql_
 
 
 def call_create_club_dfs(player_id: str, event_url: str) -> None:
-    data = get_club_results_details_data(event_url)
+    session_id = event_url.rstrip('/').split('/')[-1]
+    data = club_api.session_details_json(session_id)
     if data is None:
         return None
     return create_club_dfs(data) # todo: fully convert to polars
@@ -306,7 +308,11 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
         if player_id in st.session_state.game_urls_d:
             game_urls = st.session_state.game_urls_d[player_id]
         else:
-            game_urls = get_club_results_from_acbl_number(player_id)
+            try:
+                game_urls = club_api.player_club_games(player_id)
+            except club_api.ClubApiClientError as e:
+                st.error(f"Could not retrieve club games for {player_id}: {e}")
+                return False
         if game_urls is None:
             st.error(f"Player number {player_id} not found.")
             return False
@@ -315,7 +321,7 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
             # Don't return False here yet - check tournament sessions first
         elif session_id is None:
             session_id = list(game_urls.keys())[0]  # default to most recent club game
-        print_to_log_info('get_club_results_from_acbl_number time:', time.time()-t) # takes 4s
+        print_to_log_info('player_club_games time:', time.time()-t) # takes 4s
 
     with st.spinner(f"Retrieving a list of tournament sessions for {player_id} ..."):
         t = time.time()
@@ -370,9 +376,11 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
             game_description = game_urls[session_id][2]
             st.text(f"{game_description}")
             t = time.time()
-            # game_urls[session_id][1] is detail_url
-            results_url = game_urls[session_id][1]
-            data = get_club_results_details_data(results_url)
+            try:
+                data = club_api.session_details_json(session_id)
+            except club_api.ClubApiClientError as e:
+                st.error(f"Could not retrieve data for game {session_id}: {e}")
+                return False
             if data is None:
                 st.error(f"Could not retrieve data for game {session_id}")
                 return False
