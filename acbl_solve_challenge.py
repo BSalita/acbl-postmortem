@@ -62,10 +62,14 @@ def _has_cf_clearance(context) -> bool:
 
 
 def is_challenged(page, context=None) -> bool:
-    """Return True while the Cloudflare interstitial is still blocking access."""
-    if context is not None and _has_cf_clearance(context):
-        return False
+    """Return True while the Cloudflare interstitial is still blocking access.
 
+    Judge by the PAGE, never by cookie presence: a stale cf_clearance (e.g.
+    bound to an older Chrome UA after an image rebuild) sits in the profile
+    while the challenge is actively showing. Short-circuiting on the cookie
+    made this script report "already cleared" and skip the interactive solve
+    exactly when it was needed.
+    """
     try:
         url = (page.url or '').lower()
         title = (page.title() or '').lower()
@@ -93,6 +97,11 @@ def main() -> int:
     print(f"Using Chrome profile: {profile_dir.resolve()}")
 
     with sync_playwright() as p:
+        # Keep flags identical to mlBridgeAcblLib.create_acbl_browser_context
+        # (except window position: the solve window must be on-screen so a
+        # human can click). cf_clearance is bound to the browser fingerprint,
+        # so solving with a different launch than the scraper's can yield a
+        # cookie the scraper cannot use.
         context = p.chromium.launch_persistent_context(
             user_data_dir=str(profile_dir),
             channel='chrome',
@@ -101,7 +110,7 @@ def main() -> int:
                 '--disable-blink-features=AutomationControlled',
                 '--no-first-run',
                 '--no-default-browser-check',
-                '--window-size=1280,900',
+                '--window-size=1920,1080',
                 # Chrome refuses to run as root (typical in containers) with
                 # its sandbox enabled.
                 *(['--no-sandbox'] if os.name == 'posix' and os.geteuid() == 0 else []),
