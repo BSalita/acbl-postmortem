@@ -1129,11 +1129,11 @@ def validate_contract_predictions_against_training(df: pl.DataFrame, club_or_tou
     debug_predictions_file = acbl_path / "debug_predictions_contract.parquet"
     
     if not (debug_input_file.exists() and debug_predictions_file.exists()):
-        print("ðŸ” Training debug files not found - skipping validation")
+        print("🔍 Training debug files not found - skipping validation")
         return
     
     print("=" * 60)
-    print("ðŸ” VALIDATING AGAINST TRAINING MODULE RESULTS")
+    print("🔍 VALIDATING AGAINST TRAINING MODULE RESULTS")
     print("=" * 60)
     
     try:
@@ -1146,7 +1146,7 @@ def validate_contract_predictions_against_training(df: pl.DataFrame, club_or_tou
             training_accuracy = (training_predictions_df['Contract'] == training_predictions_df['Contract_Pred']).mean()
             training_pred_counts = training_predictions_df['Contract_Pred'].value_counts().sort('Contract_Pred')
             
-            print(f"ðŸ“Š TRAINING MODULE RESULTS:")
+            print(f"📊 TRAINING MODULE RESULTS:")
             print(f"   Input shape: {training_input_df.shape}")
             print(f"   Predictions shape: {training_predictions_df.shape}")
             print(f"   Training accuracy: {training_accuracy:.4f} ({training_accuracy*100:.2f}%)")
@@ -1154,7 +1154,7 @@ def validate_contract_predictions_against_training(df: pl.DataFrame, club_or_tou
             print(f"   Top predictions: {training_pred_counts.head(5).to_dict()}")
             
             # Re-run prediction on training input using current pipeline
-            print(f"\nðŸ”„ RE-RUNNING ON TRAINING INPUT...")
+            print(f"\n🔄 RE-RUNNING ON TRAINING INPUT...")
             model_name = f'acbl_{club_or_tournament}_predicted_contract_torch_model'
             
             # Add fake columns that predict_model expects
@@ -1205,14 +1205,14 @@ def validate_contract_predictions_against_training(df: pl.DataFrame, club_or_tou
                 current_accuracy = (new_prediction_df['Contract'] == new_prediction_df['Contract_Pred']).mean()
                 current_pred_counts = new_prediction_df['Contract_Pred'].value_counts().sort('Contract_Pred')
                 
-                print(f"ðŸ“Š CURRENT INFERENCE RESULTS:")
+                print(f"📊 CURRENT INFERENCE RESULTS:")
                 print(f"   Current accuracy: {current_accuracy:.4f} ({current_accuracy*100:.2f}%)")
                 print(f"   Unique predictions: {new_prediction_df['Contract_Pred'].n_unique()}")
                 print(f"   Top predictions: {current_pred_counts.head(5).to_dict()}")
                 
                 # Compare results
                 accuracy_diff = current_accuracy - training_accuracy
-                print(f"\nðŸ“Š COMPARISON:")
+                print(f"\n📊 COMPARISON:")
                 print(f"   Training accuracy: {training_accuracy:.4f} ({training_accuracy*100:.2f}%)")
                 print(f"   Current accuracy:  {current_accuracy:.4f} ({current_accuracy*100:.2f}%)")
                 print(f"   Difference:        {accuracy_diff:.4f} ({accuracy_diff*100:.2f}%)")
@@ -1230,7 +1230,7 @@ def validate_contract_predictions_against_training(df: pl.DataFrame, club_or_tou
                         print(f"   Schema numerical features: {len(schema.get('numerical_feature_cols', []))}")
                         print(f"   Schema category mappings: {len(schema.get('category_mappings', {}))}")
                 else:
-                    print(f"   âœ… Accuracies match within tolerance.")
+                    print(f"   ✅ Accuracies match within tolerance.")
             
     except Exception as e:
         print(f"âŒ Error during validation: {str(e)}")
@@ -1995,9 +1995,9 @@ def create_sidebar() -> None:
     # Automated Postmortem Apps - Always show (above Developer Settings at bottom of sidebar)
     st.sidebar.markdown("---")
     st.sidebar.markdown("**Automated Postmortem Apps**")
-    st.sidebar.markdown("ðŸ”— [ACBL Postmortem](https://acbl.postmortem.chat)")
-    st.sidebar.markdown("ðŸ”— [French ffbridge Postmortem](https://ffbridge.postmortem.chat)")
-    st.sidebar.markdown("ðŸ”— [Calculate PBN](https://pbn.postmortem.chat)")
+    st.sidebar.markdown("🔗 [ACBL Postmortem](https://acbl.postmortem.chat)")
+    st.sidebar.markdown("🔗 [French ffbridge Postmortem](https://ffbridge.postmortem.chat)")
+    st.sidebar.markdown("🔗 [Calculate PBN](https://pbn.postmortem.chat)")
 
     # Developer Settings - Always show regardless of player_id (at very bottom of sidebar)
     with st.sidebar.expander('Developer Settings', False):
@@ -2300,7 +2300,7 @@ def read_configs() -> None:
 #                             assert len(slash_command) == 2
 #                             streamlit_chat.message(
 #                                 f"Morty: {slash_command[1]}", key='main.slash.'+str(i), logo=st.session_state.assistant_logo)
-#                             pdf_assets.append(f"ðŸ¥¸ Morty: {slash_command[1]}")
+#                             pdf_assets.append(f"🥸 Morty: {slash_command[1]}")
 #                         continue
 #                     match = re.match(
 #                         r'```sql\n(.*)\n```', message['content'])
@@ -2311,7 +2311,7 @@ def read_configs() -> None:
 #                         sql_query = message['content']
 #                         streamlit_chat.message(f"Morty: Oy, invalid SQL query: {sql_query}",
 #                                             key='main.invalid.'+str(i), logo=st.session_state.assistant_logo)
-#                         pdf_assets.append(f"ðŸ¥¸ Morty: Oy, invalid SQL query: {sql_query}")
+#                         pdf_assets.append(f"🥸 Morty: Oy, invalid SQL query: {sql_query}")
 #                         continue
 #                     else:
 #                         # for unknown reasons, the sql query is returned embedded in a markdown code block.
@@ -2332,7 +2332,7 @@ def read_configs() -> None:
 #                     assistant_content = f"{user_prompt_help} -- Never happened."
 #                     streamlit_chat.message(
 #                         f"Morty: {assistant_content}", key='main.empty_dataframe.'+str(i), logo=st.session_state.assistant_logo)
-#                     pdf_assets.append(f"ðŸ¥¸ Morty: {assistant_content}")
+#                     pdf_assets.append(f"🥸 Morty: {assistant_content}")
 #                     continue
 #                 if df.shape == (1, 1):
 #                     assistant_answer = str(df.columns[0]).replace(
@@ -2344,12 +2344,12 @@ def read_configs() -> None:
 #                         assistant_content = f"{assistant_answer} is {assistant_scaler}."
 #                     streamlit_chat.message(
 #                         f"Morty: {user_prompt_help} {assistant_content}", key='main.dataframe_is_scaler.'+str(i), logo=st.session_state.assistant_logo)
-#                     pdf_assets.append(f"ðŸ¥¸ Morty: {user_prompt_help} {assistant_content}")
+#                     pdf_assets.append(f"🥸 Morty: {user_prompt_help} {assistant_content}")
 #                     continue
 #                 assistant_content = f"{user_prompt_help} Result is a dataframe of {len(df)} rows."
 #                 streamlit_chat.message(
 #                     f"Morty: {assistant_content}", key='main.dataframe.'+str(i), logo=st.session_state.assistant_logo)
-#                 pdf_assets.append(f"ðŸ¥¸ Morty: {assistant_content}")
+#                 pdf_assets.append(f"🥸 Morty: {assistant_content}")
 #                 #df.index.name = 'Row'
 #                 st.session_state.df_unique_id += 1 # only needed because message dataframes aren't being released for some unknown reason.
 #                 ShowDataFrameTable(
@@ -2444,10 +2444,10 @@ def read_configs() -> None:
 #         st.session_state.do_not_cache_df = True
 
 #         #st.session_state.df_unique_id = 0 # only needed because message dataframes aren't being released for some unknown reason.
-#         #st.session_state.assistant_logo = 'https://github.com/BSalita/Bridge_Game_Postmortem_Chatbot/blob/master/assets/logo_assistant.gif?raw=true' # ðŸ¥¸ todo: put into config. must have raw=true for github url.
-#         #st.session_state.guru_logo = 'https://github.com/BSalita/Bridge_Game_Postmortem_Chatbot/blob/master/assets/logo_guru.png?raw=true' # ðŸ¥·todo: put into config file. must have raw=true for github url.
-#         st.session_state.assistant_logo = 'https://github.com/BSalita/Bridge_Game_Postmortem_Chatbot/blob/master/assets/logo_assistant.gif?raw=true' # ðŸ¥¸ todo: put into config. must have raw=true for github url.
-#         st.session_state.guru_logo = 'https://github.com/BSalita/Bridge_Game_Postmortem_Chatbot/blob/master/assets/logo_guru.png?raw=true' # ðŸ¥·todo: put into config file. must have raw=true for github url.
+#         #st.session_state.assistant_logo = 'https://github.com/BSalita/Bridge_Game_Postmortem_Chatbot/blob/master/assets/logo_assistant.gif?raw=true' # 🥸 todo: put into config. must have raw=true for github url.
+#         #st.session_state.guru_logo = 'https://github.com/BSalita/Bridge_Game_Postmortem_Chatbot/blob/master/assets/logo_guru.png?raw=true' # 🥷todo: put into config file. must have raw=true for github url.
+#         st.session_state.assistant_logo = 'https://github.com/BSalita/Bridge_Game_Postmortem_Chatbot/blob/master/assets/logo_assistant.gif?raw=true' # 🥸 todo: put into config. must have raw=true for github url.
+#         st.session_state.guru_logo = 'https://github.com/BSalita/Bridge_Game_Postmortem_Chatbot/blob/master/assets/logo_guru.png?raw=true' # 🥷todo: put into config file. must have raw=true for github url.
 
 #         # causes streamlit connection error
 #         # if os.environ.get('STREAMLIT_ENV') is not None and os.environ.get('STREAMLIT_ENV') == 'development':
@@ -2494,8 +2494,8 @@ def read_configs() -> None:
 
 def initialize_website_specific() -> None:
 
-    st.session_state.assistant_logo = 'https://github.com/BSalita/Bridge_Game_Postmortem_Chatbot/blob/master/assets/logo_assistant.gif?raw=true' # ðŸ¥¸ todo: put into config. must have raw=true for github url.
-    st.session_state.guru_logo = 'https://github.com/BSalita/Bridge_Game_Postmortem_Chatbot/blob/master/assets/logo_guru.png?raw=true' # ðŸ¥·todo: put into config file. must have raw=true for github url.
+    st.session_state.assistant_logo = 'https://github.com/BSalita/Bridge_Game_Postmortem_Chatbot/blob/master/assets/logo_assistant.gif?raw=true' # 🥸 todo: put into config. must have raw=true for github url.
+    st.session_state.guru_logo = 'https://github.com/BSalita/Bridge_Game_Postmortem_Chatbot/blob/master/assets/logo_guru.png?raw=true' # 🥷todo: put into config file. must have raw=true for github url.
     st.session_state.game_results_url_default = None
     st.session_state.game_name = 'acbl'
     st.session_state.game_results_url = st.session_state.game_results_url_default
