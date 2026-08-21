@@ -375,6 +375,7 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
         dfs = None
         with st.spinner(f"Collecting data for club game {session_id} and player {player_id}."):
             game_description = game_urls[session_id][2]
+            results_url = game_urls[session_id][1]
             st.text(f"{game_description}")
             t = time.time()
             try:
