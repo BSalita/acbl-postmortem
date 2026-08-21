@@ -157,7 +157,6 @@ for _p in _resolved_libs:
 from mlBridge.mlBridgeAcblLib import (
     get_tournament_sessions_from_acbl_number,
     get_tournament_session_results,
-    create_club_dfs,
     merge_clean_augment_club_dfs,
     merge_clean_augment_tournament_dfs,
 )
@@ -217,12 +216,12 @@ def ShowDataFrameTable(df: Any, key: str, query: Optional[str] = None, show_sql_
     return result_df
 
 
-def call_create_club_dfs(player_id: str, event_url: str) -> None:
+def call_create_club_dfs(
+    player_id: str, event_url: str
+) -> Optional[Dict[str, pl.DataFrame]]:
     session_id = event_url.rstrip('/').split('/')[-1]
-    data = club_api.session_details_json(session_id)
-    if data is None:
-        return None
-    return create_club_dfs(data) # todo: fully convert to polars
+    dfs, _source = club_api.session_dataframes(session_id)
+    return dfs
 
 
 # def create_tournament_dfs(player_id, event_url):
@@ -377,14 +376,14 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
             st.text(f"{game_description}")
             t = time.time()
             try:
-                data = club_api.session_details_json(session_id)
+                dfs, details_source = club_api.session_dataframes(session_id)
             except club_api.ClubApiClientError as e:
                 st.error(f"Could not retrieve data for game {session_id}: {e}")
                 return False
-            if data is None:
+            if dfs is None:
                 st.error(f"Could not retrieve data for game {session_id}")
                 return False
-            dfs = create_club_dfs(data)
+            st.caption(f"Session data source: {details_source or 'unknown'}")
             if dfs is None or 'event' not in dfs or len(dfs['event']) == 0:
                 st.error(
                     f"Game {session_id} has missing or invalid game data. Must be a Mitchell movement game. Select a different club game or tournament session from left sidebar.")
@@ -413,7 +412,7 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
                     f"Game {session_id} has an invalid hand record of {dfs['sessions']['hand_record_id'][0]}. Select a different club game or tournament session from left sidebar.")
                 return False
             
-            print_to_log_info('create_club_dfs time:', time.time()-t) # takes 3s
+            print_to_log_info('session_dataframes time:', time.time()-t)
 
         with st.spinner(f"Processing data for club game: {session_id} and player {player_id}."):
         # todo: show descriptions similar to the tournament session descriptions below

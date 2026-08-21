@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, Optional, Tuple
 
+import polars as pl
 import requests
 
 ACBL_ORIGIN = "https://my.acbl.org"
@@ -35,7 +36,9 @@ class ClubApiClientError(RuntimeError):
         self.status_code = status_code
 
 
-def _get_json(path: str, params: Optional[Dict[str, Any]] = None) -> Any:
+def _get_response(
+    path: str, params: Optional[Dict[str, Any]] = None
+) -> requests.Response:
     url = f"{ACBL_CLUB_API_BASE_URL}{path}"
     try:
         resp = requests.get(
@@ -58,7 +61,11 @@ def _get_json(path: str, params: Optional[Dict[str, Any]] = None) -> Any:
             hint=body.get("hint"),
             status_code=resp.status_code,
         )
-    return resp.json()
+    return resp
+
+
+def _get_json(path: str, params: Optional[Dict[str, Any]] = None) -> Any:
+    return _get_response(path, params=params).json()
 
 
 def player_club_games(
@@ -111,6 +118,9 @@ def player_club_games(
             )
             if part is not None
         )
+        listing_source = row.get("listing_source") or (table.get("meta") or {}).get("source")
+        if listing_source:
+            msg = f"{msg} [listing source: {listing_source}]"
         details_url = row.get("details_url") or f"{ACBL_ORIGIN}/club-results/details/{sid}"
         games[key] = (source_url, details_url, msg)
     # Most recent first, matching the old event-id-descending ordering.
@@ -119,9 +129,41 @@ def player_club_games(
 
 def session_details_json(session_id: Any, refresh: bool = False) -> Optional[Dict[str, Any]]:
     """Raw details JSON, shaped like get_club_results_details_data (dict or None)."""
+    data, _source = session_details_json_with_source(session_id, refresh=refresh)
+    return data
+
+
+def session_details_json_with_source(
+    session_id: Any, refresh: bool = False
+) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Raw details JSON and its API-reported provenance label."""
     try:
-        return _get_json(f"/sessions/{session_id}/raw", {"refresh": refresh})
+        resp = _get_response(f"/sessions/{session_id}/raw", {"refresh": refresh})
+        return resp.json(), resp.headers.get("X-ACBL-Data-Source")
     except ClubApiClientError as exc:
         if exc.status_code == 404:
-            return None  # team event or no embedded details JSON
+            return None, None  # team event or no embedded details JSON
         raise
+
+
+def session_dataframes(
+    session_id: Any, refresh: bool = False
+) -> Tuple[Optional[Dict[str, pl.DataFrame]], Optional[str]]:
+    """Flat create_club_dfs-compatible frames and their provenance.
+
+    The API serves these from normalized historical parquet when available,
+    otherwise from archive/cache/live session JSON.
+    """
+    try:
+        payload = _get_json(f"/sessions/{session_id}/frames", {"refresh": refresh})
+    except ClubApiClientError as exc:
+        if exc.status_code == 404:
+            return None, None
+        raise
+    tables = payload.get("tables") or {}
+    frames = {
+        name: pl.DataFrame(rows, strict=False)
+        for name, rows in tables.items()
+    }
+    source = (payload.get("meta") or {}).get("source")
+    return frames or None, source
