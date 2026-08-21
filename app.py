@@ -371,63 +371,96 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
     st.session_state.tournament_session_urls_d[player_id] = tournament_session_urls
 
     if session_id in game_urls:
+        df = None
+        dfs = None
         with st.spinner(f"Collecting data for club game {session_id} and player {player_id}."):
             game_description = game_urls[session_id][2]
             st.text(f"{game_description}")
             t = time.time()
             try:
-                dfs, details_source = club_api.session_dataframes(session_id)
+                df, details_source = club_api.session_augmented_dataframe(session_id)
             except club_api.ClubApiClientError as e:
                 st.error(f"Could not retrieve data for game {session_id}: {e}")
                 return False
-            if dfs is None:
-                st.error(f"Could not retrieve data for game {session_id}")
-                return False
-            st.caption(f"Session data source: {details_source or 'unknown'}")
-            if dfs is None or 'event' not in dfs or len(dfs['event']) == 0:
-                st.error(
-                    f"Game {session_id} has missing or invalid game data. Must be a Mitchell movement game. Select a different club game or tournament session from left sidebar.")
-                return False
-            print_to_log_info('dfs:',dfs.keys())
+            if df is not None:
+                required = {
+                    'event_id', 'session_id', 'section_name', 'Board', 'PBN',
+                    'event_type', 'board_scoring_method',
+                    'Pair_Number_NS', 'Pair_Number_EW',
+                    'Player_ID_N', 'Player_ID_S', 'Player_ID_E', 'Player_ID_W',
+                }
+                missing = sorted(required.difference(df.columns))
+                if missing:
+                    st.error(
+                        f"Historical postmortem {session_id} is missing required "
+                        f"columns: {', '.join(missing)}")
+                    return False
+                if df['event_type'].drop_nulls().unique().to_list() != ['PAIRS']:
+                    st.error(
+                        f"Game {session_id} is not an ACBL pairs game. "
+                        "Select a different game.")
+                    return False
+                if df['board_scoring_method'].drop_nulls().unique().to_list() != ['MATCH_POINTS']:
+                    st.error(
+                        f"Game {session_id} is not a match point game. "
+                        "Select a different game.")
+                    return False
+                if df['PBN'].null_count() == len(df):
+                    st.error(
+                        f"Game {session_id} has no valid hand records. "
+                        "Select a different game.")
+                    return False
+                st.caption(f"Session data source: {details_source or 'historical augmented parquet'}")
+                print_to_log_info(
+                    'session_augmented_dataframe time:', time.time()-t,
+                    'shape:', df.shape)
+            else:
+                # The monthly/quarterly monolith does not contain the newest
+                # sessions. Build only those from recent JSON/live data.
+                try:
+                    dfs, details_source = club_api.session_dataframes(session_id)
+                except club_api.ClubApiClientError as e:
+                    st.error(f"Could not retrieve data for game {session_id}: {e}")
+                    return False
+                if dfs is None or 'event' not in dfs or len(dfs['event']) == 0:
+                    st.error(
+                        f"Game {session_id} has missing or invalid game data. Must be a Mitchell movement game. Select a different club game or tournament session from left sidebar.")
+                    return False
+                st.caption(f"Session data source: {details_source or 'unknown'}")
+                print_to_log_info('dfs:', dfs.keys())
 
-            # todo: probably need to check if keys exist to control error processing -- pair_summaries, event, sessions, ...
-
-            if dfs['pair_summaries']['pair_number'].n_unique() == 1 or dfs['pair_summaries']['direction'].n_unique() == 1: # Assuming pair_numbers are all unique for Howell
-                st.error(
-                    f"Game {session_id}. I can only chat about Mitchell movements. Select a different club game or tournament session from left sidebar.")
-                return False
-
-            if dfs['event']['type'][0] != 'PAIRS':
-                st.error(
-                    f"Game {session_id} is {dfs['event']['type'][0]}. Expecting an ACBL pairs match point game. Select a different club game or tournament session from left sidebar.")
-                return False
-
-            if dfs['event']['board_scoring_method'][0] != 'MATCH_POINTS':
-                st.error(
-                    f"Game {session_id} is {dfs['event']['board_scoring_method'][0]}. Expecting an ACBL pairs match point game. Select a different club game or tournament session from left sidebar.")
-                return False
-
-            if not dfs['sessions']['hand_record_id'][0].isdigit(): # all session should have the same hand_record_id so just take the first.
-                st.error(
-                    f"Game {session_id} has an invalid hand record of {dfs['sessions']['hand_record_id'][0]}. Select a different club game or tournament session from left sidebar.")
-                return False
-            
-            print_to_log_info('session_dataframes time:', time.time()-t)
+                if dfs['pair_summaries']['pair_number'].n_unique() == 1 or dfs['pair_summaries']['direction'].n_unique() == 1:
+                    st.error(
+                        f"Game {session_id}. I can only chat about Mitchell movements. Select a different club game or tournament session from left sidebar.")
+                    return False
+                if dfs['event']['type'][0] != 'PAIRS':
+                    st.error(
+                        f"Game {session_id} is {dfs['event']['type'][0]}. Expecting an ACBL pairs match point game. Select a different club game or tournament session from left sidebar.")
+                    return False
+                if dfs['event']['board_scoring_method'][0] != 'MATCH_POINTS':
+                    st.error(
+                        f"Game {session_id} is {dfs['event']['board_scoring_method'][0]}. Expecting an ACBL pairs match point game. Select a different club game or tournament session from left sidebar.")
+                    return False
+                if not dfs['sessions']['hand_record_id'][0].isdigit():
+                    st.error(
+                        f"Game {session_id} has an invalid hand record of {dfs['sessions']['hand_record_id'][0]}. Select a different club game or tournament session from left sidebar.")
+                    return False
+                print_to_log_info('session_dataframes time:', time.time()-t)
 
         with st.spinner(f"Processing data for club game: {session_id} and player {player_id}."):
-        # todo: show descriptions similar to the tournament session descriptions below
-        #with st.spinner(f"Processing data for club game: {dfs['session']['start_date']} {dfs['session']['description']} session {dfs['session']['id']} number {dfs['session']['session_number']} section {dfs['section']} and player {player_id}."):
             t = time.time()
-            #df, sd_cache_d, matchpoint_ns_d = merge_clean_augment_club_dfs(dfs, {}, player_id) # doesn't use any caching
-            df = merge_clean_augment_club_dfs(dfs, {}, player_id)
             if df is None:
-                st.error(
-                    f"Game {session_id} has an invalid game file. Select a different club game or tournament session from left sidebar.")
-                return False
-            print_to_log_info('merge_clean_augment_club_dfs time:', time.time()-t) # takes 30s
-
-            # Always run fresh augmentation - no caching to prevent schema mismatch bugs
-            df = augment_df(df)
+                assert dfs is not None
+                df = merge_clean_augment_club_dfs(dfs, {}, player_id)
+                if df is None:
+                    st.error(
+                        f"Game {session_id} has an invalid game file. Select a different club game or tournament session from left sidebar.")
+                    return False
+                print_to_log_info('merge_clean_augment_club_dfs time:', time.time()-t)
+                df = augment_df(df)
+            else:
+                print_to_log_info(
+                    'Using precomputed historical augmentations for', session_id)
             save_augmented_df_to_cache(df, session_id, player_id)
             with open('df_columns.txt','w') as f:
                 for col in sorted(df.columns):

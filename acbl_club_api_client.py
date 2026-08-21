@@ -12,6 +12,7 @@ Configure with ACBL_CLUB_API_BASE_URL (default http://127.0.0.1:8508).
 
 from __future__ import annotations
 
+import io
 import os
 from typing import Any, Dict, Optional, Tuple
 
@@ -167,3 +168,26 @@ def session_dataframes(
     }
     source = (payload.get("meta") or {}).get("source")
     return frames or None, source
+
+
+def session_augmented_dataframe(
+    session_id: Any,
+) -> Tuple[Optional[pl.DataFrame], Optional[str]]:
+    """Precomputed historical postmortem, transported as Parquet.
+
+    A 404 means the session is newer than the augmented monolith; callers
+    should then use session_dataframes and run the existing augmentation path.
+    """
+    try:
+        resp = _get_response(f"/sessions/{session_id}/postmortem.parquet")
+    except ClubApiClientError as exc:
+        if exc.status_code == 404:
+            return None, None
+        raise
+    try:
+        frame = pl.read_parquet(io.BytesIO(resp.content))
+    except Exception as exc:
+        raise ClubApiClientError(
+            f"Invalid postmortem parquet returned for session {session_id}: {exc}"
+        ) from exc
+    return frame, resp.headers.get("X-ACBL-Data-Source")

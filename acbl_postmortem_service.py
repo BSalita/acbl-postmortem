@@ -46,6 +46,11 @@ _SEAT_TUPLES = (
 
 # Default column set for the per-board summary tool; intersected with the
 # actual dataframe columns since older caches may predate some augmentations.
+# TODO: ParContract is not produced by the current ACBL augmentation pipeline.
+# Determine whether the list-of-structs ParContracts column is the correct
+# semantic substitute and format it for display; otherwise augment a canonical
+# singular ParContract column. Do not silently treat them as interchangeable:
+# a board can have multiple equally optimal par contracts.
 BOARD_SUMMARY_COLUMNS = [
     "Board", "Contract", "Declarer_Direction", "Declarer_ID", "Declarer_Name",
     "Result", "Tricks", "Score_NS", "Score_EW", "Pct_NS", "Pct_EW",
