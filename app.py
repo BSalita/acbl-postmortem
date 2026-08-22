@@ -452,7 +452,6 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
         st.error(f"Session {session_id} was not found for player {player_id}.")
         return False
 
-    st.text(game_description)
     report_retrieval(
         f"Requesting {result_kind} postmortem data from the ACBL API. "
         "Historical data, API cache, then live data will be checked ...")
