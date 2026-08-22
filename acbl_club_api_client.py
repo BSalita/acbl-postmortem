@@ -161,6 +161,41 @@ def player_club_games(
     return games
 
 
+def player_historical_club_games(
+    player_id: str,
+    limit: int = 2000,
+) -> Dict[int, Tuple[str, str, str]]:
+    """Club games guaranteed to have postmortems in augmented parquet."""
+    table = _get_json(
+        f"/clubs/players/{player_id}/postmortems", {"limit": limit})
+    source_url = f"{ACBL_ORIGIN}/club-results/my-results/{player_id}"
+    games: Dict[int, Tuple[str, str, str]] = {}
+    for row in table.get("rows", []):
+        try:
+            key = int(row.get("session_id"))
+        except (TypeError, ValueError):
+            continue
+        description = ", ".join(
+            str(value)
+            for value in (
+                row.get("session_id"),
+                row.get("date"),
+                row.get("club_name"),
+                row.get("event"),
+                row.get("session"),
+                row.get("score"),
+            )
+            if value not in (None, "")
+        )
+        games[key] = (
+            source_url,
+            row.get("details_url")
+            or f"{ACBL_ORIGIN}/club-results/details/{key}",
+            description,
+        )
+    return games
+
+
 def player_tournament_sessions(
     player_id: str,
     limit: int = 2000,

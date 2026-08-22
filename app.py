@@ -463,8 +463,51 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
         report_retrieval(
             f"Requesting {result_kind} postmortem data from the ACBL API "
             f"... error: {exc}.")
-        st.error(f"Could not retrieve data for session {session_id}: {exc}")
-        return False
+        fallback_loaded = False
+        error_text = str(exc).lower()
+        if result_kind == "club" and (
+            "cloudflare" in error_text
+            or "challenge detected" in error_text
+        ):
+            report_retrieval(
+                "The latest club game is blocked by Cloudflare. Looking for "
+                "the newest game already available in historical data ...")
+            try:
+                historical_games = club_api.player_historical_club_games(
+                    player_id)
+                historical_latest = _latest_result_entry(historical_games)
+            except club_api.ClubApiClientError as fallback_exc:
+                historical_latest = None
+                report_retrieval(
+                    "Historical fallback lookup failed: "
+                    f"{fallback_exc}.")
+            if (
+                historical_latest is not None
+                and historical_latest[0] != session_id
+            ):
+                fallback_id = historical_latest[0]
+                fallback_entry = game_urls.get(
+                    fallback_id, historical_latest[1])
+                report_retrieval(
+                    f"Loading historical club game "
+                    f"{fallback_entry[2]} instead.")
+                try:
+                    df, details_source = club_api.session_augmented_dataframe(
+                        fallback_id, player_id=player_id)
+                except club_api.ClubApiClientError as fallback_exc:
+                    report_retrieval(
+                        f"Historical fallback game {fallback_id} failed: "
+                        f"{fallback_exc}.")
+                else:
+                    session_id = fallback_id
+                    game_urls[fallback_id] = fallback_entry
+                    game_description = fallback_entry[2]
+                    results_url = fallback_entry[1]
+                    fallback_loaded = df is not None
+        if not fallback_loaded:
+            st.error(
+                f"Could not retrieve data for session {session_id}: {exc}")
+            return False
     if df is None:
         st.error(f"Postmortem data is unavailable for session {session_id}.")
         return False
