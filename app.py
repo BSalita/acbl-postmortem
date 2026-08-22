@@ -271,6 +271,29 @@ def _normalize_session_id_arg(session_id: Any) -> Any:
     return session_id
 
 
+def _result_entry_date(entry: Tuple[Any, ...]) -> datetime:
+    """Parse the leading date from a club/tournament result description."""
+    description = str(entry[2]) if len(entry) > 2 else ""
+    # Club descriptions start with the session id, while tournament
+    # descriptions start directly with the date.
+    for value in (part.strip() for part in description.split(",")[:2]):
+        for fmt in ("%Y-%m-%d", "%m/%d/%Y"):
+            try:
+                return datetime.strptime(value, fmt)
+            except ValueError:
+                pass
+    return datetime.min
+
+
+def _latest_result_entry(
+    entries: Dict[Any, Tuple[Any, ...]],
+) -> Optional[Tuple[Any, Tuple[Any, ...], datetime]]:
+    if not entries:
+        return None
+    key, entry = max(entries.items(), key=lambda item: _result_entry_date(item[1]))
+    return key, entry, _result_entry_date(entry)
+
+
 def save_augmented_df_to_cache(df: Any, session_id: Any, player_id: str) -> None:
     """Persist the augmented postmortem dataframe for headless consumers
     (acbl_postmortem_mcp_server.py), using the same cache naming as
@@ -301,15 +324,27 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
     st.markdown('<div style="height: 50px;"><a id="top-of-report" name="top-of-report"></a></div>', unsafe_allow_html=True)
 
     con = get_db_connection()
+    retrieval_status = st.status(
+        "Finding the latest club game and tournament session ...",
+        expanded=True,
+    )
+
+    def report_retrieval(message: str) -> None:
+        retrieval_status.write(message)
 
     with st.spinner(f"Retrieving a list of club games for {player_id} ..."):
         t = time.time()
         if player_id in st.session_state.game_urls_d:
             game_urls = st.session_state.game_urls_d[player_id]
+            report_retrieval("Using club games already fetched in this browser session.")
         else:
             try:
-                game_urls = club_api.player_club_games(player_id)
+                game_urls = club_api.player_club_games(
+                    player_id,
+                    progress=report_retrieval,
+                )
             except club_api.ClubApiClientError as e:
+                report_retrieval(f"Club-game lookup failed: {e}.")
                 st.error(f"Could not retrieve club games for {player_id}: {e}")
                 return False
         if game_urls is None:
@@ -317,27 +352,66 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
             return False
         if len(game_urls) == 0:
             st.info(f"No club games found for {player_id}.")
-            # Don't return False here yet - check tournament sessions first
-        elif session_id is None:
-            session_id = list(game_urls.keys())[0]  # default to most recent club game
         print_to_log_info('player_club_games time:', time.time()-t) # takes 4s
 
     with st.spinner(f"Retrieving a list of tournament sessions for {player_id} ..."):
         t = time.time()
+        tournament_source_url = f"https://live.acbl.org/player-results/{player_id}"
         if player_id in st.session_state.tournament_session_urls_d:
             tournament_session_urls = st.session_state.tournament_session_urls_d[player_id]
+            report_retrieval(
+                "Using tournament sessions already fetched in this browser session.")
         else:
-            tournament_session_urls = get_tournament_sessions_from_acbl_number(player_id, acbl_api_key) # returns [url, url, description, dfs]
+            report_retrieval(
+                f"Fetching latest tournament sessions for {tournament_source_url} "
+                "through the ACBL API ...")
+            try:
+                tournament_session_urls = get_tournament_sessions_from_acbl_number(
+                    player_id, acbl_api_key)
+            except Exception as exc:
+                report_retrieval(
+                    f"Fetching latest tournament sessions for "
+                    f"{tournament_source_url} ... error: {exc}.")
+                st.error(
+                    f"Could not retrieve tournament sessions for {player_id}: {exc}")
+                return False
         if tournament_session_urls is None:
+            report_retrieval(
+                f"Fetching latest tournament sessions for "
+                f"{tournament_source_url} ... failed.")
             st.error(f"Player number {player_id} not found.")
             return False
         if len(tournament_session_urls) == 0:
+            report_retrieval(
+                f"Fetching latest tournament sessions for "
+                f"{tournament_source_url} ... no sessions found.")
             st.info(f"No tournament sessions found for {player_id}.")
-            # Don't return False here yet - check if we have any games at all
-        elif session_id is None:
-            session_id = list(tournament_session_urls.keys())[0]  # default to most recent tournament session
+        elif player_id not in st.session_state.tournament_session_urls_d:
+            report_retrieval(
+                f"Fetching latest tournament sessions for "
+                f"{tournament_source_url} ... success.")
         print_to_log_info('get_tournament_sessions_from_acbl_number time:', time.time()-t) # takes 2s
     #tournament_session_urls = {} # just ignore tournament sessions for now
+
+    latest_club = _latest_result_entry(game_urls)
+    latest_tournament = _latest_result_entry(tournament_session_urls)
+    if latest_club is not None:
+        report_retrieval(
+            f"Latest club game: {latest_club[1][2]}.")
+    if latest_tournament is not None:
+        report_retrieval(
+            f"Latest tournament session is {latest_tournament[0]}: "
+            f"{latest_tournament[1][2]}.")
+
+    if session_id is None:
+        if latest_club is not None and (
+            latest_tournament is None or latest_club[2] >= latest_tournament[2]
+        ):
+            session_id = latest_club[0]
+            report_retrieval("Club game is latest.")
+        elif latest_tournament is not None:
+            session_id = latest_tournament[0]
+            report_retrieval("Tournament session is latest.")
 
     # Check if we have any valid games or sessions at all
     has_club_games = game_urls is not None and len(game_urls) > 0
@@ -378,6 +452,7 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
             results_url = game_urls[session_id][1]
             st.text(f"{game_description}")
             t = time.time()
+            report_retrieval("Looking for results in local historical data ...")
             try:
                 df, details_source = club_api.session_augmented_dataframe(session_id)
             except club_api.ClubApiClientError as e:
@@ -411,13 +486,18 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
                         f"Game {session_id} has no valid hand records. "
                         "Select a different game.")
                     return False
-                st.caption(f"Session data source: {details_source or 'historical augmented parquet'}")
+                report_retrieval(
+                    "Results found in local historical augmented data.")
                 print_to_log_info(
                     'session_augmented_dataframe time:', time.time()-t,
                     'shape:', df.shape)
             else:
                 # The monthly/quarterly monolith does not contain the newest
                 # sessions. Build only those from recent JSON/live data.
+                report_retrieval(
+                    "Results are not available in local historical data.")
+                report_retrieval(
+                    f"Checking recent local results, then {results_url} ...")
                 try:
                     dfs, details_source = club_api.session_dataframes(session_id)
                 except club_api.ClubApiClientError as e:
@@ -427,7 +507,12 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
                     st.error(
                         f"Game {session_id} has missing or invalid game data. Must be a Mitchell movement game. Select a different club game or tournament session from left sidebar.")
                     return False
-                st.caption(f"Session data source: {details_source or 'unknown'}")
+                if details_source == 'live':
+                    report_retrieval(
+                        f"Fetching results from {results_url} ... success.")
+                else:
+                    report_retrieval(
+                        f"Results found in {details_source or 'recent local data'}.")
                 print_to_log_info('dfs:', dfs.keys())
 
                 if dfs['pair_summaries']['pair_number'].n_unique() == 1 or dfs['pair_summaries']['direction'].n_unique() == 1:
@@ -451,6 +536,7 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
         with st.spinner(f"Processing data for club game: {session_id} and player {player_id}."):
             t = time.time()
             if df is None:
+                report_retrieval("Processing results. This will take a minute.")
                 assert dfs is not None
                 df = merge_clean_augment_club_dfs(dfs, {}, player_id)
                 if df is None:
@@ -460,6 +546,7 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
                 print_to_log_info('merge_clean_augment_club_dfs time:', time.time()-t)
                 df = augment_df(df)
             else:
+                report_retrieval("Processing results.")
                 print_to_log_info(
                     'Using precomputed historical augmentations for', session_id)
             save_augmented_df_to_cache(df, session_id, player_id)
@@ -492,8 +579,17 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
         with st.spinner(f"Collecting data for tournament {dfs['session']['start_date']} {dfs['session']['description']} session {dfs['session']['id']} number {dfs['session']['session_number']} section {dfs['section']} and player {player_id}."):
             t = time.time()
 
+            report_retrieval(f"Fetching results from {results_url} ...")
             response = get_tournament_session_results(session_id, acbl_api_key)
-            assert response.status_code == 200, response.status_code
+            if response.status_code != 200:
+                report_retrieval(
+                    f"Fetching results from {results_url} ... "
+                    f"error {response.status_code}.")
+                st.error(
+                    f"Could not retrieve tournament session {session_id}: "
+                    f"HTTP {response.status_code}.")
+                return False
+            report_retrieval(f"Fetching results from {results_url} ... success.")
             json_results_d = response.json()
             if json_results_d is None:
                 st.error(
@@ -525,6 +621,7 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
             print_to_log_info('get_tournament_session_results time:', time.time()-t)
 
         with st.spinner(f"Processing data for tournament session {session_id} for player {player_id}."):
+            report_retrieval("Processing results. This will take a minute.")
             t = time.time()
             #with Profiler():
 
@@ -714,6 +811,11 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
     #content = slash_about()
     #streamlit_chat.message(f"Morty: {content}", logo=st.session_state.assistant_logo)
 
+    retrieval_status.update(
+        label=f"Loaded session {session_id}.",
+        state="complete",
+        expanded=True,
+    )
     return True # no errors
 
 

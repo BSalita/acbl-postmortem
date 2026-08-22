@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import io
 import os
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Callable, Dict, Optional, Tuple
 
 import polars as pl
 import requests
@@ -73,6 +73,7 @@ def player_club_games(
     player_id: str,
     limit: int = 2000,
     prefer_fresh: bool = True,
+    progress: Optional[Callable[[str], None]] = None,
 ) -> Optional[Dict[int, Tuple[str, str, str]]]:
     """Club games for one player, shaped like get_club_results_from_acbl_number.
 
@@ -84,13 +85,21 @@ def player_club_games(
     source_url = f"{ACBL_ORIGIN}/club-results/my-results/{player_id}"
     table = None
     if prefer_fresh:
+        if progress is not None:
+            progress(f"Fetching latest club games from {source_url} ...")
         try:
             table = _get_json(f"/players/{player_id}/games", {"limit": limit, "refresh": True})
         except ClubApiClientError as exc:
             if exc.status_code == 400:
                 return None
+            if progress is not None:
+                progress(
+                    f"Fetching latest club games from {source_url} ... "
+                    f"error {exc.status_code or 'unknown'}: {exc}.")
             # Scrape failed or nothing live; retry against the cache below.
     if table is None:
+        if progress is not None:
+            progress("Checking cached and historical club-game listings ...")
         try:
             table = _get_json(f"/players/{player_id}/games", {"limit": limit})
         except ClubApiClientError as exc:
@@ -99,6 +108,28 @@ def player_club_games(
             if exc.status_code == 404:
                 return {}
             raise
+
+    meta = table.get("meta") or {}
+    attempts = meta.get("refresh_attempts") or []
+    for attempt in attempts:
+        attempt_number = int(attempt.get("attempt") or 1)
+        verb = "Fetching" if attempt_number == 1 else "Retrying"
+        if attempt.get("status") == "success":
+            message = f"{verb} {source_url} ... success."
+        else:
+            status_code = attempt.get("status_code") or "unknown"
+            detail = attempt.get("detail") or "unknown error"
+            message = f"{verb} {source_url} ... error {status_code}: {detail}."
+        if progress is not None:
+            progress(message)
+    if progress is not None and meta.get("refresh_failed"):
+        source = str(meta.get("source") or "local history")
+        progress(f"Live refresh failed; using the club-game listing from {source}.")
+    elif progress is not None and not attempts:
+        source = str(meta.get("source") or "local history")
+        progress(
+            f"Checking cached and historical club-game listings ... "
+            f"found in {source}.")
 
     games: Dict[int, Tuple[str, str, str]] = {}
     for row in table.get("rows", []):
@@ -119,13 +150,11 @@ def player_club_games(
             )
             if part is not None
         )
-        listing_source = row.get("listing_source") or (table.get("meta") or {}).get("source")
-        if listing_source:
-            msg = f"{msg} [listing source: {listing_source}]"
         details_url = row.get("details_url") or f"{ACBL_ORIGIN}/club-results/details/{sid}"
         games[key] = (source_url, details_url, msg)
     # Most recent first, matching the old event-id-descending ordering.
-    return dict(sorted(games.items(), reverse=True))
+    games = dict(sorted(games.items(), reverse=True))
+    return games
 
 
 def session_details_json(session_id: Any, refresh: bool = False) -> Optional[Dict[str, Any]]:
