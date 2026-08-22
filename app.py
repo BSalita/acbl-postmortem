@@ -347,8 +347,18 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
         expanded=True,
     )
 
+    pending_retrieval_line = None
+
     def report_retrieval(message: str) -> None:
-        retrieval_status.write(message)
+        nonlocal pending_retrieval_line
+        if message.endswith(" ..."):
+            pending_retrieval_line = retrieval_status.empty()
+            pending_retrieval_line.write(message)
+        elif pending_retrieval_line is not None:
+            pending_retrieval_line.write(message)
+            pending_retrieval_line = None
+        else:
+            retrieval_status.write(message)
 
     direct_tournament_results = None
     if explicit_session:
@@ -380,6 +390,9 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
                     f"HTTP {response.status_code}.")
                 return False
             direct_tournament_results = response.json()
+            report_retrieval(
+                "Fetching requested tournament session using the ACBL "
+                "tournament API ... success.")
             section = _tournament_section_for_player(
                 direct_tournament_results, player_id)
             if section is None:
@@ -412,9 +425,6 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
                 game_description,
                 direct_dfs,
             )
-            report_retrieval(
-                "Fetching requested tournament session using the ACBL "
-                "tournament API ... success.")
     else:
         t = time.time()
         if player_id in st.session_state.game_urls_d:
@@ -438,13 +448,16 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
             st.info(f"No club games found for {player_id}.")
         print_to_log_info('player_club_games time:', time.time()-t) # takes 4s
 
-        with st.spinner(f"Retrieving a list of tournament sessions for {player_id} ..."):
+        with st.container():
             t = time.time()
             if player_id in st.session_state.tournament_session_urls_d:
                 tournament_session_urls = st.session_state.tournament_session_urls_d[player_id]
                 report_retrieval(
                     "Using tournament sessions already fetched in this browser session.")
             else:
+                report_retrieval(
+                    "Fetching latest tournament sessions using the ACBL "
+                    "tournament API ...")
                 try:
                     tournament_session_urls = get_tournament_sessions_from_acbl_number(
                         player_id, acbl_api_key)
@@ -533,9 +546,13 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
             try:
                 df, details_source = club_api.session_augmented_dataframe(session_id)
             except club_api.ClubApiClientError as e:
+                report_retrieval(
+                    f"Looking for results in local historical data ... error: {e}.")
                 st.error(f"Could not retrieve data for game {session_id}: {e}")
                 return False
             if df is not None:
+                report_retrieval(
+                    "Results found in local historical augmented data.")
                 required = {
                     'event_id', 'session_id', 'section_name', 'Board', 'PBN',
                     'event_type', 'board_scoring_method',
@@ -563,8 +580,6 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
                         f"Game {session_id} has no valid hand records. "
                         "Select a different game.")
                     return False
-                report_retrieval(
-                    "Results found in local historical augmented data.")
                 print_to_log_info(
                     'session_augmented_dataframe time:', time.time()-t,
                     'shape:', df.shape)
@@ -578,11 +593,10 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
                 try:
                     dfs, details_source = club_api.session_dataframes(session_id)
                 except club_api.ClubApiClientError as e:
+                    report_retrieval(
+                        f"Checking recent local results, then {results_url} "
+                        f"... error: {e}.")
                     st.error(f"Could not retrieve data for game {session_id}: {e}")
-                    return False
-                if dfs is None or 'event' not in dfs or len(dfs['event']) == 0:
-                    st.error(
-                        f"Game {session_id} has missing or invalid game data. Must be a Mitchell movement game. Select a different club game or tournament session from left sidebar.")
                     return False
                 if details_source == 'live':
                     report_retrieval(
@@ -590,6 +604,10 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
                 else:
                     report_retrieval(
                         f"Results found in {details_source or 'recent local data'}.")
+                if dfs is None or 'event' not in dfs or len(dfs['event']) == 0:
+                    st.error(
+                        f"Game {session_id} has missing or invalid game data. Must be a Mitchell movement game. Select a different club game or tournament session from left sidebar.")
+                    return False
                 print_to_log_info('dfs:', dfs.keys())
 
                 if dfs['pair_summaries']['pair_number'].n_unique() == 1 or dfs['pair_summaries']['direction'].n_unique() == 1:
@@ -610,23 +628,26 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
                     return False
                 print_to_log_info('session_dataframes time:', time.time()-t)
 
-        with st.spinner(f"Processing data for club game: {session_id} and player {player_id}."):
+        with st.container():
             t = time.time()
             if df is None:
-                report_retrieval("Processing results. This will take a minute.")
+                report_retrieval(
+                    "Processing results; this may take a minute ...")
                 assert dfs is not None
                 df = merge_clean_augment_club_dfs(dfs, {}, player_id)
                 if df is None:
+                    report_retrieval("Processing results ... failed.")
                     st.error(
                         f"Game {session_id} has an invalid game file. Select a different club game or tournament session from left sidebar.")
                     return False
                 print_to_log_info('merge_clean_augment_club_dfs time:', time.time()-t)
                 df = augment_df(df)
             else:
-                report_retrieval("Processing results.")
+                report_retrieval("Processing results ...")
                 print_to_log_info(
                     'Using precomputed historical augmentations for', session_id)
             save_augmented_df_to_cache(df, session_id, player_id)
+            report_retrieval("Processing results ... complete.")
             with open('df_columns.txt','w') as f:
                 for col in sorted(df.columns):
                     f.write(col+'\n')
@@ -653,7 +674,7 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
                 f"Session {session_id} is {dfs['score_score_type']}. Expecting an ACBL pairs match point session. Choose another session.")
             return False
 
-        with st.spinner(f"Collecting data for tournament {dfs['session']['start_date']} {dfs['session']['description']} session {dfs['session']['id']} number {dfs['session']['session_number']} section {dfs['section']} and player {player_id}."):
+        with st.container():
             t = time.time()
 
             if direct_tournament_results is None:
@@ -704,13 +725,15 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
                     return False
             print_to_log_info('get_tournament_session_results time:', time.time()-t)
 
-        with st.spinner(f"Processing data for tournament session {session_id} for player {player_id}."):
-            report_retrieval("Processing results. This will take a minute.")
+        with st.container():
+            report_retrieval(
+                "Processing results; this may take a minute ...")
             t = time.time()
             #with Profiler():
 
             df = merge_clean_augment_tournament_dfs(dfs, json_results_d, acbl_api_key, player_id)
             if df is None:
+                report_retrieval("Processing results ... failed.")
                 st.error(
                     f"Session {session_id} has an invalid tournament session file. Choose another session.")
                 return False
@@ -718,6 +741,7 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
             #df = acbllib.convert_ffdf_to_mldf(df)
             df = augment_df(df)
             save_augmented_df_to_cache(df, session_id, player_id)
+            report_retrieval("Processing results ... complete.")
             with open('df_columns.txt','w') as f:
                 for col in sorted(df.columns):
                     f.write(col+'\n')
