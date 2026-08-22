@@ -294,6 +294,19 @@ def _latest_result_entry(
     return key, entry, _result_entry_date(entry)
 
 
+def _tournament_section_for_player(
+    session_data: Dict[str, Any],
+    player_id: str,
+) -> Optional[Dict[str, Any]]:
+    """Find the section containing a player in a full tournament-session response."""
+    pid = str(player_id)
+    for section in session_data.get('sections') or []:
+        for result in section.get('board_results') or []:
+            if any(str(value) == pid for value in (result.get('pair_acbl') or [])):
+                return section
+    return None
+
+
 def save_augmented_df_to_cache(df: Any, session_id: Any, player_id: str) -> None:
     """Persist the augmented postmortem dataframe for headless consumers
     (acbl_postmortem_mcp_server.py), using the same cache naming as
@@ -324,81 +337,151 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
     st.markdown('<div style="height: 50px;"><a id="top-of-report" name="top-of-report"></a></div>', unsafe_allow_html=True)
 
     con = get_db_connection()
+    explicit_session = session_id is not None
     retrieval_status = st.status(
-        "Finding the latest club game and tournament session ...",
+        (
+            f"Loading requested session {session_id} ..."
+            if explicit_session
+            else "Finding the latest club game and tournament session ..."
+        ),
         expanded=True,
     )
 
     def report_retrieval(message: str) -> None:
         retrieval_status.write(message)
 
-    t = time.time()
-    if player_id in st.session_state.game_urls_d:
-        game_urls = st.session_state.game_urls_d[player_id]
-        report_retrieval("Using club games already fetched in this browser session.")
-    else:
-        try:
-            game_urls = club_api.player_club_games(
-                player_id,
-                progress=report_retrieval,
+    direct_tournament_results = None
+    if explicit_session:
+        game_urls = {}
+        tournament_session_urls = {}
+        session_text = str(session_id).strip()
+        if session_text.isdigit():
+            session_id = int(session_text)
+            results_url = f"https://my.acbl.org/club-results/details/{session_id}"
+            game_urls[session_id] = (
+                f"https://my.acbl.org/club-results/my-results/{player_id}",
+                results_url,
+                f"Club game {session_id}",
             )
-        except club_api.ClubApiClientError as e:
-            report_retrieval(f"Club-game lookup failed: {e}.")
-            st.error(f"Could not retrieve club games for {player_id}: {e}")
-            return False
-    if game_urls is None:
-        st.error(f"Player number {player_id} not found.")
-        return False
-    if len(game_urls) == 0:
-        st.info(f"No club games found for {player_id}.")
-    print_to_log_info('player_club_games time:', time.time()-t) # takes 4s
-
-    with st.spinner(f"Retrieving a list of tournament sessions for {player_id} ..."):
-        t = time.time()
-        if player_id in st.session_state.tournament_session_urls_d:
-            tournament_session_urls = st.session_state.tournament_session_urls_d[player_id]
             report_retrieval(
-                "Using tournament sessions already fetched in this browser session.")
+                f"Session {session_id} was specified; fetching it directly.")
+        else:
+            session_id = session_text
+            report_retrieval(
+                "Fetching requested tournament session using the ACBL "
+                "tournament API ...")
+            response = get_tournament_session_results(session_id, acbl_api_key)
+            if response.status_code != 200:
+                report_retrieval(
+                    "Fetching requested tournament session using the ACBL "
+                    f"tournament API ... error {response.status_code}.")
+                st.error(
+                    f"Could not retrieve tournament session {session_id}: "
+                    f"HTTP {response.status_code}.")
+                return False
+            direct_tournament_results = response.json()
+            section = _tournament_section_for_player(
+                direct_tournament_results, player_id)
+            if section is None:
+                st.error(
+                    f"Player {player_id} was not found in tournament session "
+                    f"{session_id}.")
+                return False
+            event = direct_tournament_results.get('event') or {}
+            tournament = direct_tournament_results.get('tournament') or {}
+            direct_dfs = {
+                'event': event,
+                'score_score_type': section.get('scoring_type'),
+                'session': direct_tournament_results,
+                'section': section.get('section_label'),
+            }
+            results_url = (
+                f"https://live.acbl.org/event/"
+                f"{session_id.replace('-', '/')}/summary")
+            game_description = ", ".join(
+                str(value) for value in (
+                    direct_tournament_results.get('start_date'),
+                    tournament.get('name'),
+                    event.get('name'),
+                    direct_tournament_results.get('description'),
+                ) if value
+            )
+            tournament_session_urls[session_id] = (
+                "https://api.acbl.org/v1/tournament/session",
+                results_url,
+                game_description,
+                direct_dfs,
+            )
+            report_retrieval(
+                "Fetching requested tournament session using the ACBL "
+                "tournament API ... success.")
+    else:
+        t = time.time()
+        if player_id in st.session_state.game_urls_d:
+            game_urls = st.session_state.game_urls_d[player_id]
+            report_retrieval(
+                "Using club games already fetched in this browser session.")
         else:
             try:
-                tournament_session_urls = get_tournament_sessions_from_acbl_number(
-                    player_id, acbl_api_key)
-            except Exception as exc:
-                report_retrieval(
-                    "Fetching latest tournament sessions using the ACBL "
-                    f"tournament API ... error: {exc}.")
-                st.error(
-                    f"Could not retrieve tournament sessions for {player_id}: {exc}")
+                game_urls = club_api.player_club_games(
+                    player_id,
+                    progress=report_retrieval,
+                )
+            except club_api.ClubApiClientError as e:
+                report_retrieval(f"Club-game lookup failed: {e}.")
+                st.error(f"Could not retrieve club games for {player_id}: {e}")
                 return False
-        if tournament_session_urls is None:
-            report_retrieval(
-                "Fetching latest tournament sessions using the ACBL "
-                "tournament API ... failed.")
+        if game_urls is None:
             st.error(f"Player number {player_id} not found.")
             return False
-        if len(tournament_session_urls) == 0:
-            report_retrieval(
-                "Fetching latest tournament sessions using the ACBL "
-                "tournament API ... no sessions found.")
-            st.info(f"No tournament sessions found for {player_id}.")
-        elif player_id not in st.session_state.tournament_session_urls_d:
-            report_retrieval(
-                "Fetching latest tournament sessions using the ACBL "
-                "tournament API ... success.")
-        print_to_log_info('get_tournament_sessions_from_acbl_number time:', time.time()-t) # takes 2s
-    #tournament_session_urls = {} # just ignore tournament sessions for now
+        if len(game_urls) == 0:
+            st.info(f"No club games found for {player_id}.")
+        print_to_log_info('player_club_games time:', time.time()-t) # takes 4s
 
-    latest_club = _latest_result_entry(game_urls)
-    latest_tournament = _latest_result_entry(tournament_session_urls)
-    if latest_club is not None:
-        report_retrieval(
-            f"Latest club game: {latest_club[1][2]}.")
-    if latest_tournament is not None:
-        report_retrieval(
-            f"Latest tournament session is {latest_tournament[0]}: "
-            f"{latest_tournament[1][2]}.")
+        with st.spinner(f"Retrieving a list of tournament sessions for {player_id} ..."):
+            t = time.time()
+            if player_id in st.session_state.tournament_session_urls_d:
+                tournament_session_urls = st.session_state.tournament_session_urls_d[player_id]
+                report_retrieval(
+                    "Using tournament sessions already fetched in this browser session.")
+            else:
+                try:
+                    tournament_session_urls = get_tournament_sessions_from_acbl_number(
+                        player_id, acbl_api_key)
+                except Exception as exc:
+                    report_retrieval(
+                        "Fetching latest tournament sessions using the ACBL "
+                        f"tournament API ... error: {exc}.")
+                    st.error(
+                        f"Could not retrieve tournament sessions for {player_id}: {exc}")
+                    return False
+            if tournament_session_urls is None:
+                report_retrieval(
+                    "Fetching latest tournament sessions using the ACBL "
+                    "tournament API ... failed.")
+                st.error(f"Player number {player_id} not found.")
+                return False
+            if len(tournament_session_urls) == 0:
+                report_retrieval(
+                    "Fetching latest tournament sessions using the ACBL "
+                    "tournament API ... no sessions found.")
+                st.info(f"No tournament sessions found for {player_id}.")
+            elif player_id not in st.session_state.tournament_session_urls_d:
+                report_retrieval(
+                    "Fetching latest tournament sessions using the ACBL "
+                    "tournament API ... success.")
+            print_to_log_info('get_tournament_sessions_from_acbl_number time:', time.time()-t) # takes 2s
 
-    if session_id is None:
+        latest_club = _latest_result_entry(game_urls)
+        latest_tournament = _latest_result_entry(tournament_session_urls)
+        if latest_club is not None:
+            report_retrieval(
+                f"Latest club game: {latest_club[1][2]}.")
+        if latest_tournament is not None:
+            report_retrieval(
+                f"Latest tournament session is {latest_tournament[0]}: "
+                f"{latest_tournament[1][2]}.")
+
         if latest_club is not None and (
             latest_tournament is None or latest_club[2] >= latest_tournament[2]
         ):
@@ -432,25 +515,6 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
                 session_id = alt_session_id
         except (ValueError, TypeError):
             pass
-
-    # A bookmarked URL can retain a session from a different player. The
-    # requested player is valid, so fall back to their newest available result
-    # instead of incorrectly reporting that the player was not found.
-    if session_id not in game_urls and session_id not in tournament_session_urls:
-        unavailable_session_id = session_id
-        if latest_club is not None and (
-            latest_tournament is None or latest_club[2] >= latest_tournament[2]
-        ):
-            session_id = latest_club[0]
-            report_retrieval(
-                f"Requested session {unavailable_session_id} is not available "
-                f"for player {player_id}; using latest club game {session_id}.")
-        elif latest_tournament is not None:
-            session_id = latest_tournament[0]
-            report_retrieval(
-                f"Requested session {unavailable_session_id} is not available "
-                f"for player {player_id}; using latest tournament session "
-                f"{session_id}.")
 
     # clear games state aninitialize values which are known to be valid at this point
     reset_game_data() # wipe out all game state data
@@ -592,18 +656,25 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
         with st.spinner(f"Collecting data for tournament {dfs['session']['start_date']} {dfs['session']['description']} session {dfs['session']['id']} number {dfs['session']['session_number']} section {dfs['section']} and player {player_id}."):
             t = time.time()
 
-            report_retrieval(f"Fetching results from {results_url} ...")
-            response = get_tournament_session_results(session_id, acbl_api_key)
-            if response.status_code != 200:
+            if direct_tournament_results is None:
                 report_retrieval(
-                    f"Fetching results from {results_url} ... "
-                    f"error {response.status_code}.")
-                st.error(
-                    f"Could not retrieve tournament session {session_id}: "
-                    f"HTTP {response.status_code}.")
-                return False
-            report_retrieval(f"Fetching results from {results_url} ... success.")
-            json_results_d = response.json()
+                    "Fetching tournament session results using the ACBL "
+                    "tournament API ...")
+                response = get_tournament_session_results(session_id, acbl_api_key)
+                if response.status_code != 200:
+                    report_retrieval(
+                        "Fetching tournament session results using the ACBL "
+                        f"tournament API ... error {response.status_code}.")
+                    st.error(
+                        f"Could not retrieve tournament session {session_id}: "
+                        f"HTTP {response.status_code}.")
+                    return False
+                report_retrieval(
+                    "Fetching tournament session results using the ACBL "
+                    "tournament API ... success.")
+                json_results_d = response.json()
+            else:
+                json_results_d = direct_tournament_results
             if json_results_d is None:
                 st.error(
                     f"Session {session_id} has an invalid tournament session file. Choose another session.")
@@ -655,6 +726,16 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
         st.error(f"Session {session_id} was not found for player {player_id}.")
         return False
 
+    player_id_text = str(player_id)
+    player_id_columns = [
+        'Player_ID_N', 'Player_ID_S', 'Player_ID_E', 'Player_ID_W']
+    if not any(
+        df.filter(pl.col(column).cast(pl.String) == player_id_text).height > 0
+        for column in player_id_columns
+    ):
+        st.error(f"Player {player_id} was not found in session {session_id}.")
+        return False
+
     # No more user errors possible. Everything checks out so it's safe to update the session state with new data.
     #reset_game_data() # wipe out all game state data
     #st.session_state.player_id = player_id
@@ -683,7 +764,9 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
 
     # Iterate over player directions
     for player_direction, pair_direction, partner_direction, opponent_pair_direction in [('North', 'NS', 'S', 'EW'), ('South', 'NS', 'N', 'EW'), ('East', 'EW', 'W', 'NS'), ('West', 'EW', 'E', 'NS')]:
-        rows = df.filter(pl.col(f"Player_ID_{player_direction[0]}").str.contains(st.session_state.player_id))
+        rows = df.filter(
+            pl.col(f"Player_ID_{player_direction[0]}").cast(pl.String)
+            == player_id_text)
         print(f"{st.session_state.player_id=} {rows.height=}")
         if rows.height > 0:
             st.session_state.player_id = player_id
