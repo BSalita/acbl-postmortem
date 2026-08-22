@@ -542,17 +542,19 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
             game_description = game_urls[session_id][2]
             results_url = game_urls[session_id][1]
             t = time.time()
-            report_retrieval("Looking for results in local historical data ...")
+            report_retrieval(
+                "Looking for club results in local historical data ...")
             try:
                 df, details_source = club_api.session_augmented_dataframe(session_id)
             except club_api.ClubApiClientError as e:
                 report_retrieval(
-                    f"Looking for results in local historical data ... error: {e}.")
+                    f"Looking for club results in local historical data "
+                    f"... error: {e}.")
                 st.error(f"Could not retrieve data for game {session_id}: {e}")
                 return False
             if df is not None:
                 report_retrieval(
-                    "Results found in local historical augmented data.")
+                    "Club results found in local historical augmented data.")
                 required = {
                     'event_id', 'session_id', 'section_name', 'Board', 'PBN',
                     'event_type', 'board_scoring_method',
@@ -587,23 +589,24 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
                 # The monthly/quarterly monolith does not contain the newest
                 # sessions. Build only those from recent JSON/live data.
                 report_retrieval(
-                    "Results are not available in local historical data.")
+                    "Club results are not available in local historical data.")
                 report_retrieval(
-                    f"Checking recent local results, then {results_url} ...")
+                    f"Checking recent local club results, then {results_url} ...")
                 try:
                     dfs, details_source = club_api.session_dataframes(session_id)
                 except club_api.ClubApiClientError as e:
                     report_retrieval(
-                        f"Checking recent local results, then {results_url} "
+                        f"Checking recent local club results, then {results_url} "
                         f"... error: {e}.")
                     st.error(f"Could not retrieve data for game {session_id}: {e}")
                     return False
                 if details_source == 'live':
                     report_retrieval(
-                        f"Fetching results from {results_url} ... success.")
+                        f"Fetching club results from {results_url} ... success.")
                 else:
                     report_retrieval(
-                        f"Results found in {details_source or 'recent local data'}.")
+                        f"Club results found in "
+                        f"{details_source or 'recent local data'}.")
                 if dfs is None or 'event' not in dfs or len(dfs['event']) == 0:
                     st.error(
                         f"Game {session_id} has missing or invalid game data. Must be a Mitchell movement game. Select a different club game or tournament session from left sidebar.")
@@ -632,22 +635,22 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
             t = time.time()
             if df is None:
                 report_retrieval(
-                    "Processing results; this may take a minute ...")
+                    "Processing club results; this may take a minute ...")
                 assert dfs is not None
                 df = merge_clean_augment_club_dfs(dfs, {}, player_id)
                 if df is None:
-                    report_retrieval("Processing results ... failed.")
+                    report_retrieval("Processing club results ... failed.")
                     st.error(
                         f"Game {session_id} has an invalid game file. Select a different club game or tournament session from left sidebar.")
                     return False
                 print_to_log_info('merge_clean_augment_club_dfs time:', time.time()-t)
                 df = augment_df(df)
             else:
-                report_retrieval("Processing results ...")
+                report_retrieval("Processing club results ...")
                 print_to_log_info(
                     'Using precomputed historical augmentations for', session_id)
             save_augmented_df_to_cache(df, session_id, player_id)
-            report_retrieval("Processing results ... complete.")
+            report_retrieval("Processing club results ... complete.")
             with open('df_columns.txt','w') as f:
                 for col in sorted(df.columns):
                     f.write(col+'\n')
@@ -727,13 +730,13 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
 
         with st.container():
             report_retrieval(
-                "Processing results; this may take a minute ...")
+                "Processing tournament results; this may take a minute ...")
             t = time.time()
             #with Profiler():
 
             df = merge_clean_augment_tournament_dfs(dfs, json_results_d, acbl_api_key, player_id)
             if df is None:
-                report_retrieval("Processing results ... failed.")
+                report_retrieval("Processing tournament results ... failed.")
                 st.error(
                     f"Session {session_id} has an invalid tournament session file. Choose another session.")
                 return False
@@ -741,7 +744,7 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
             #df = acbllib.convert_ffdf_to_mldf(df)
             df = augment_df(df)
             save_augmented_df_to_cache(df, session_id, player_id)
-            report_retrieval("Processing results ... complete.")
+            report_retrieval("Processing tournament results ... complete.")
             with open('df_columns.txt','w') as f:
                 for col in sorted(df.columns):
                     f.write(col+'\n')
@@ -778,7 +781,9 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
     st.session_state.game_results_url = results_url
     #st.session_state.tournament_session_urls_d[player_id] = tournament_session_urls
     st.session_state.sql_query_mode = False
-    st.session_state.main_section_container = st.container(border=True)
+    # Keep an invisible placeholder until write_report creates the populated,
+    # bordered report container. Creating the border here leaves an empty box.
+    st.session_state.main_section_container = st.empty()
 
     with st.spinner(f"Creating everything data table."):
         t = time.time()
