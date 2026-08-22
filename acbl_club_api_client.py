@@ -69,6 +69,11 @@ def _get_json(path: str, params: Optional[Dict[str, Any]] = None) -> Any:
     return _get_response(path, params=params).json()
 
 
+def dataset_info() -> Dict[str, Any]:
+    """Unified API health and data-tier metadata."""
+    return _get_json("/health")
+
+
 def player_club_games(
     player_id: str,
     limit: int = 2000,
@@ -156,6 +161,71 @@ def player_club_games(
     return games
 
 
+def player_tournament_sessions(
+    player_id: str,
+    limit: int = 2000,
+    prefer_fresh: bool = True,
+    progress: Optional[Callable[[str], None]] = None,
+) -> Optional[Dict[str, Tuple[str, str, str, Dict[str, Any]]]]:
+    """Tournament sessions from the unified API, shaped for app.py."""
+    if progress is not None:
+        progress("Fetching latest tournament sessions using the ACBL API ...")
+    try:
+        table = _get_json(
+            f"/tournaments/players/{player_id}/sessions",
+            {"limit": limit, "refresh": prefer_fresh},
+        )
+    except ClubApiClientError as exc:
+        if exc.status_code == 400:
+            return None
+        if progress is not None:
+            progress(
+                "Fetching latest tournament sessions using the ACBL API "
+                f"... error {exc.status_code or 'unknown'}: {exc}.")
+        if prefer_fresh:
+            table = _get_json(
+                f"/tournaments/players/{player_id}/sessions",
+                {"limit": limit, "refresh": False},
+            )
+        else:
+            raise
+    meta = table.get("meta") or {}
+    if progress is not None:
+        if meta.get("refresh_failed"):
+            progress(
+                "Live tournament refresh failed; falling back to API cache "
+                "and historical data.")
+        else:
+            progress(
+                "Fetching latest tournament sessions using the ACBL API "
+                "... success.")
+    source_url = "https://api.acbl.org/v1/tournament/player/history_query"
+    sessions: Dict[str, Tuple[str, str, str, Dict[str, Any]]] = {}
+    for row in table.get("rows", []):
+        sid = str(row.get("session_id") or "")
+        if not sid:
+            continue
+        description = ", ".join(
+            str(value)
+            for value in (
+                row.get("date"),
+                row.get("tournament_name"),
+                row.get("event_name"),
+                row.get("session"),
+                row.get("score"),
+            )
+            if value not in (None, "")
+        )
+        sessions[sid] = (
+            source_url,
+            row.get("details_url")
+            or f"https://live.acbl.org/event/{sid.replace('-', '/')}/summary",
+            description,
+            row,
+        )
+    return sessions
+
+
 def session_details_json(session_id: Any, refresh: bool = False) -> Optional[Dict[str, Any]]:
     """Raw details JSON, shaped like get_club_results_details_data (dict or None)."""
     data, _source = session_details_json_with_source(session_id, refresh=refresh)
@@ -200,14 +270,19 @@ def session_dataframes(
 
 def session_augmented_dataframe(
     session_id: Any,
+    player_id: Optional[str] = None,
+    refresh: bool = False,
 ) -> Tuple[Optional[pl.DataFrame], Optional[str]]:
-    """Precomputed historical postmortem, transported as Parquet.
+    """Complete API-resolved postmortem, transported as Parquet.
 
-    A 404 means the session is newer than the augmented monolith; callers
-    should then use session_dataframes and run the existing augmentation path.
+    Resolution is historical augmented parquet, API parquet cache, then a
+    headless live build. Streamlit never generates MCP data.
     """
     try:
-        resp = _get_response(f"/sessions/{session_id}/postmortem.parquet")
+        resp = _get_response(
+            f"/postmortems/{session_id}.parquet",
+            {"player_id": player_id, "refresh": refresh},
+        )
     except ClubApiClientError as exc:
         if exc.status_code == 404:
             return None, None

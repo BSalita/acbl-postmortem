@@ -86,12 +86,9 @@ import endplay
 
 # todo: only want to assert if first time. assert os.getenv("ACBL_API_KEY") is None, f"ACBL_API_KEY environment variable should not be set. Remove .streamlit/secrets.toml file? {os.getenv('ACBL_API_KEY')}"
 load_dotenv()
-
-# retrieve ACBL API Key
-acbl_api_key = os.getenv("ACBL_API_KEY")
-assert acbl_api_key is not None, "ACBL_API_KEY environment variable not set. See README.md for instructions."
-assert 'Bearer' not in acbl_api_key, "ACBL_API_KEY must not contain 'Bearer' or it will be rejected by ACBL."
-assert 'Authorization' not in acbl_api_key, "ACBL_API_KEY must not contain 'Authorization' or it will be rejected by ACBL."
+# The unified ACBL API owns tournament authentication. Do not retain its
+# bearer token in the Streamlit process.
+os.environ.pop("ACBL_API_KEY", None)
 
 # retrieve OpenAI API Key
 #openai_api_key = os.getenv("OPENAI_API_KEY")
@@ -153,21 +150,10 @@ for _p in _resolved_libs:
             sys.path.remove(_s)
         sys.path.insert(0, _s)
 
-# streamlitlib, mlBridge must be placed after sys.path.append. vscode re-format likes to move them to the top
-from mlBridge.mlBridgeAcblLib import (
-    get_tournament_sessions_from_acbl_number,
-    get_tournament_session_results,
-    merge_clean_augment_club_dfs,
-    merge_clean_augment_tournament_dfs,
-)
-# Club-results scraping now lives in the club API (src/acbl/acbl_club_api_server.py);
-# this client mirrors the old mlBridgeAcblLib return shapes over HTTP.
+# Both club and tournament retrieval now use the unified ACBL API.
 import acbl_club_api_client as club_api
 import streamlitlib # must be placed after sys.path.append. vscode re-format likes to move this to the top
 from mlBridge.mlBridgeLib import pd_options_display, contract_classes, cast_numeric_display_columns # must be placed after sys.path.append. vscode re-format likes to move this to the top
-from mlBridge.mlBridgeAugmentLib import (
-    AllAugmentations,
-)
 from mlBridge.mlBridgePostmortemLib import PostmortemBase
 
 # override pandas display options
@@ -294,38 +280,7 @@ def _latest_result_entry(
     return key, entry, _result_entry_date(entry)
 
 
-def _tournament_section_for_player(
-    session_data: Dict[str, Any],
-    player_id: str,
-) -> Optional[Dict[str, Any]]:
-    """Find the section containing a player in a full tournament-session response."""
-    pid = str(player_id)
-    for section in session_data.get('sections') or []:
-        for result in section.get('board_results') or []:
-            if any(str(value) == pid for value in (result.get('pair_acbl') or [])):
-                return section
-    return None
-
-
-def save_augmented_df_to_cache(df: Any, session_id: Any, player_id: str) -> None:
-    """Persist the augmented postmortem dataframe for headless consumers
-    (acbl_postmortem_mcp_server.py), using the same cache naming as
-    ffbridge-postmortem. Write-only by design: the live app always re-augments
-    fresh (see the 'no caching' note in change_game_state) so this cache never
-    feeds back into the UI."""
-    try:
-        cache_dir = pathlib.Path('cache')
-        cache_dir.mkdir(exist_ok=True)
-        cache_file = cache_dir / f'df-{session_id}-{player_id}.parquet'
-        df.write_parquet(cache_file)
-        print_to_log_info(f"Saved postmortem cache {cache_file}: shape:{df.shape} size:{cache_file.stat().st_size}")
-    except Exception as e:
-        print_to_log_info(f"Unable to save postmortem cache for {session_id}-{player_id}: {e}")
-
-
 def change_game_state(player_id: str, session_id: str) -> None: # todo: rename to session_id?
-    global acbl_api_key
-
     session_id = _normalize_session_id_arg(session_id)
 
     # Clear prediction cache when loading a new game/session
@@ -360,7 +315,6 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
         else:
             retrieval_status.write(message)
 
-    direct_tournament_results = None
     if explicit_session:
         game_urls = {}
         tournament_session_urls = {}
@@ -377,54 +331,17 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
                 f"Session {session_id} was specified; fetching it directly.")
         else:
             session_id = session_text
-            report_retrieval(
-                "Fetching requested tournament session using the ACBL "
-                "tournament API ...")
-            response = get_tournament_session_results(session_id, acbl_api_key)
-            if response.status_code != 200:
-                report_retrieval(
-                    "Fetching requested tournament session using the ACBL "
-                    f"tournament API ... error {response.status_code}.")
-                st.error(
-                    f"Could not retrieve tournament session {session_id}: "
-                    f"HTTP {response.status_code}.")
-                return False
-            direct_tournament_results = response.json()
-            report_retrieval(
-                "Fetching requested tournament session using the ACBL "
-                "tournament API ... success.")
-            section = _tournament_section_for_player(
-                direct_tournament_results, player_id)
-            if section is None:
-                st.error(
-                    f"Player {player_id} was not found in tournament session "
-                    f"{session_id}.")
-                return False
-            event = direct_tournament_results.get('event') or {}
-            tournament = direct_tournament_results.get('tournament') or {}
-            direct_dfs = {
-                'event': event,
-                'score_score_type': section.get('scoring_type'),
-                'session': direct_tournament_results,
-                'section': section.get('section_label'),
-            }
             results_url = (
                 f"https://live.acbl.org/event/"
                 f"{session_id.replace('-', '/')}/summary")
-            game_description = ", ".join(
-                str(value) for value in (
-                    direct_tournament_results.get('start_date'),
-                    tournament.get('name'),
-                    event.get('name'),
-                    direct_tournament_results.get('description'),
-                ) if value
-            )
             tournament_session_urls[session_id] = (
                 "https://api.acbl.org/v1/tournament/session",
                 results_url,
-                game_description,
-                direct_dfs,
+                f"Tournament session {session_id}",
+                {},
             )
+            report_retrieval(
+                f"Session {session_id} was specified; fetching it directly.")
     else:
         t = time.time()
         if player_id in st.session_state.game_urls_d:
@@ -455,16 +372,10 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
                 report_retrieval(
                     "Using tournament sessions already fetched in this browser session.")
             else:
-                report_retrieval(
-                    "Fetching latest tournament sessions using the ACBL "
-                    "tournament API ...")
                 try:
-                    tournament_session_urls = get_tournament_sessions_from_acbl_number(
-                        player_id, acbl_api_key)
-                except Exception as exc:
-                    report_retrieval(
-                        "Fetching latest tournament sessions using the ACBL "
-                        f"tournament API ... error: {exc}.")
+                    tournament_session_urls = club_api.player_tournament_sessions(
+                        player_id, progress=report_retrieval)
+                except club_api.ClubApiClientError as exc:
                     st.error(
                         f"Could not retrieve tournament sessions for {player_id}: {exc}")
                     return False
@@ -475,15 +386,9 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
                 st.error(f"Player number {player_id} not found.")
                 return False
             if len(tournament_session_urls) == 0:
-                report_retrieval(
-                    "Fetching latest tournament sessions using the ACBL "
-                    "tournament API ... no sessions found.")
                 st.info(f"No tournament sessions found for {player_id}.")
-            elif player_id not in st.session_state.tournament_session_urls_d:
-                report_retrieval(
-                    "Fetching latest tournament sessions using the ACBL "
-                    "tournament API ... success.")
-            print_to_log_info('get_tournament_sessions_from_acbl_number time:', time.time()-t) # takes 2s
+            print_to_log_info(
+                'player_tournament_sessions time:', time.time()-t)
 
         latest_club = _latest_result_entry(game_urls)
         latest_tournament = _latest_result_entry(tournament_session_urls)
@@ -536,224 +441,57 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
     st.session_state.tournament_session_urls_d[player_id] = tournament_session_urls
 
     if session_id in game_urls:
-        df = None
-        dfs = None
-        with st.container():
-            game_description = game_urls[session_id][2]
-            results_url = game_urls[session_id][1]
-            t = time.time()
-            report_retrieval(
-                "Looking for club results in local historical data. "
-                "This may take a minute ...")
-            try:
-                df, details_source = club_api.session_augmented_dataframe(session_id)
-            except club_api.ClubApiClientError as e:
-                report_retrieval(
-                    f"Looking for club results in local historical data "
-                    f"... error: {e}.")
-                st.error(f"Could not retrieve data for game {session_id}: {e}")
-                return False
-            if df is not None:
-                report_retrieval(
-                    "Club results found in local historical augmented data.")
-                required = {
-                    'event_id', 'session_id', 'section_name', 'Board', 'PBN',
-                    'event_type', 'board_scoring_method',
-                    'Pair_Number_NS', 'Pair_Number_EW',
-                    'Player_ID_N', 'Player_ID_S', 'Player_ID_E', 'Player_ID_W',
-                }
-                missing = sorted(required.difference(df.columns))
-                if missing:
-                    st.error(
-                        f"Historical postmortem {session_id} is missing required "
-                        f"columns: {', '.join(missing)}")
-                    return False
-                if df['event_type'].drop_nulls().unique().to_list() != ['PAIRS']:
-                    st.error(
-                        f"Game {session_id} is not an ACBL pairs game. "
-                        "Select a different game.")
-                    return False
-                if df['board_scoring_method'].drop_nulls().unique().to_list() != ['MATCH_POINTS']:
-                    st.error(
-                        f"Game {session_id} is not a match point game. "
-                        "Select a different game.")
-                    return False
-                if df['PBN'].null_count() == len(df):
-                    st.error(
-                        f"Game {session_id} has no valid hand records. "
-                        "Select a different game.")
-                    return False
-                print_to_log_info(
-                    'session_augmented_dataframe time:', time.time()-t,
-                    'shape:', df.shape)
-            else:
-                # The monthly/quarterly monolith does not contain the newest
-                # sessions. Build only those from recent JSON/live data.
-                report_retrieval(
-                    f"Club result for game {session_id} is not available in "
-                    "local historical data.")
-                report_retrieval(
-                    f"Checking recent local club results, then {results_url} ...")
-                try:
-                    dfs, details_source = club_api.session_dataframes(session_id)
-                except club_api.ClubApiClientError as e:
-                    report_retrieval(
-                        f"Checking recent local club results, then {results_url} "
-                        f"... error: {e}.")
-                    st.error(f"Could not retrieve data for game {session_id}: {e}")
-                    return False
-                if details_source == 'live':
-                    report_retrieval(
-                        f"Fetching club results from {results_url} ... success.")
-                else:
-                    report_retrieval(
-                        f"Club results found in "
-                        f"{details_source or 'recent local data'}.")
-                if dfs is None or 'event' not in dfs or len(dfs['event']) == 0:
-                    st.error(
-                        f"Game {session_id} has missing or invalid game data. Must be a Mitchell movement game. Select a different club game or tournament session from left sidebar.")
-                    return False
-                print_to_log_info('dfs:', dfs.keys())
-
-                if dfs['pair_summaries']['pair_number'].n_unique() == 1 or dfs['pair_summaries']['direction'].n_unique() == 1:
-                    st.error(
-                        f"Game {session_id}. I can only chat about Mitchell movements. Select a different club game or tournament session from left sidebar.")
-                    return False
-                if dfs['event']['type'][0] != 'PAIRS':
-                    st.error(
-                        f"Game {session_id} is {dfs['event']['type'][0]}. Expecting an ACBL pairs match point game. Select a different club game or tournament session from left sidebar.")
-                    return False
-                if dfs['event']['board_scoring_method'][0] != 'MATCH_POINTS':
-                    st.error(
-                        f"Game {session_id} is {dfs['event']['board_scoring_method'][0]}. Expecting an ACBL pairs match point game. Select a different club game or tournament session from left sidebar.")
-                    return False
-                if not dfs['sessions']['hand_record_id'][0].isdigit():
-                    st.error(
-                        f"Game {session_id} has an invalid hand record of {dfs['sessions']['hand_record_id'][0]}. Select a different club game or tournament session from left sidebar.")
-                    return False
-                print_to_log_info('session_dataframes time:', time.time()-t)
-
-        with st.container():
-            t = time.time()
-            if df is None:
-                report_retrieval(
-                    "Processing club results; this may take a minute ...")
-                assert dfs is not None
-                df = merge_clean_augment_club_dfs(dfs, {}, player_id)
-                if df is None:
-                    report_retrieval("Processing club results ... failed.")
-                    st.error(
-                        f"Game {session_id} has an invalid game file. Select a different club game or tournament session from left sidebar.")
-                    return False
-                print_to_log_info('merge_clean_augment_club_dfs time:', time.time()-t)
-                df = augment_df(df)
-            else:
-                report_retrieval("Processing club results ...")
-                print_to_log_info(
-                    'Using precomputed historical augmentations for', session_id)
-            save_augmented_df_to_cache(df, session_id, player_id)
-            report_retrieval("Processing club results ... complete.")
-            with open('df_columns.txt','w') as f:
-                for col in sorted(df.columns):
-                    f.write(col+'\n')
-
+        game_description = game_urls[session_id][2]
+        results_url = game_urls[session_id][1]
+        result_kind = "club"
     elif session_id in tournament_session_urls:
         game_description = tournament_session_urls[session_id][2]
-        st.text(f"{game_description}")
         results_url = tournament_session_urls[session_id][1]
-        dfs = tournament_session_urls[session_id][3]
-        #dfs = create_tournament_dfs(player_id, tournament_session_urls[session_id][3])
-        if dfs is None or 'event' not in dfs or len(dfs['event']) == 0:
-            st.error(
-                f"Session {session_id} has missing or invalid session data. Choose another session.")
-            return False
-        print_to_log_info(dfs.keys())
-
-        if dfs['event']['game_type'] != 'Pairs':
-            st.error(
-                f"Session {session_id} is {dfs['event']['game_type']}. Expecting an ACBL pairs match point session. Choose another session.")
-            return False
-
-        if dfs['score_score_type'] != 'Matchpoints':
-            st.error(
-                f"Session {session_id} is {dfs['score_score_type']}. Expecting an ACBL pairs match point session. Choose another session.")
-            return False
-
-        with st.container():
-            t = time.time()
-
-            if direct_tournament_results is None:
-                report_retrieval(
-                    "Fetching tournament session results using the ACBL "
-                    "tournament API ...")
-                response = get_tournament_session_results(session_id, acbl_api_key)
-                if response.status_code != 200:
-                    report_retrieval(
-                        "Fetching tournament session results using the ACBL "
-                        f"tournament API ... error {response.status_code}.")
-                    st.error(
-                        f"Could not retrieve tournament session {session_id}: "
-                        f"HTTP {response.status_code}.")
-                    return False
-                report_retrieval(
-                    "Fetching tournament session results using the ACBL "
-                    "tournament API ... success.")
-                json_results_d = response.json()
-            else:
-                json_results_d = direct_tournament_results
-            if json_results_d is None:
-                st.error(
-                    f"Session {session_id} has an invalid tournament session file. Choose another session.")
-                return False
-            print_to_log_info('json_results_d:',json_results_d.keys())
-
-            if len(json_results_d['sections']) == 0:
-                st.error(
-                    f"Session {session_id} has no sections. Choose another session.")
-                return False
-
-            if 'handrecord' not in json_results_d or len(json_results_d['handrecord']) == 0 or 'box_number' not in json_results_d or not json_results_d['box_number'].isdigit():
-                st.error(
-                    f"Session {session_id} has a missing hand record. Cannot chat about shuffled sessions. Choose another session.")
-                return False
-
-            for section in json_results_d['sections']: # is it better/possible to only examine the section which the player played in?
-
-                if section['scoring_type'] != 'Matchpoints':
-                    st.error(
-                        f"Session {session_id} section {section['section_label']} is {section['scoring_type']}. Expecting an ACBL pairs match point session. Choose another session.")
-                    return False
-
-                if section['movement_type'] != 'Mitchell':
-                    st.error(
-                        f"Session {session_id} section {section['section_label']} is {section['movement_type']}. I can only chat about Mitchell movements. Choose another session.")
-                    return False
-            print_to_log_info('get_tournament_session_results time:', time.time()-t)
-
-        with st.container():
-            report_retrieval(
-                "Processing tournament results; this may take a minute ...")
-            t = time.time()
-            #with Profiler():
-
-            df = merge_clean_augment_tournament_dfs(dfs, json_results_d, acbl_api_key, player_id)
-            if df is None:
-                report_retrieval("Processing tournament results ... failed.")
-                st.error(
-                    f"Session {session_id} has an invalid tournament session file. Choose another session.")
-                return False
-            print_to_log_info('merge_clean_augment_tournament_dfs time:', time.time()-t)
-            #df = acbllib.convert_ffdf_to_mldf(df)
-            df = augment_df(df)
-            save_augmented_df_to_cache(df, session_id, player_id)
-            report_retrieval("Processing tournament results ... complete.")
-            with open('df_columns.txt','w') as f:
-                for col in sorted(df.columns):
-                    f.write(col+'\n')
-
+        result_kind = "tournament"
     else:
         st.error(f"Session {session_id} was not found for player {player_id}.")
         return False
+
+    st.text(game_description)
+    report_retrieval(
+        f"Requesting {result_kind} postmortem data from the ACBL API. "
+        "Historical data, API cache, then live data will be checked ...")
+    t = time.time()
+    try:
+        df, details_source = club_api.session_augmented_dataframe(
+            session_id, player_id=player_id)
+    except club_api.ClubApiClientError as exc:
+        report_retrieval(
+            f"Requesting {result_kind} postmortem data from the ACBL API "
+            f"... error: {exc}.")
+        st.error(f"Could not retrieve data for session {session_id}: {exc}")
+        return False
+    if df is None:
+        st.error(f"Postmortem data is unavailable for session {session_id}.")
+        return False
+    report_retrieval(
+        f"ACBL API returned {result_kind} postmortem data from "
+        f"{details_source or 'its parquet tiers'}.")
+    required = {
+        'session_id', 'section_name', 'Board', 'PBN',
+        'Pair_Number_NS', 'Pair_Number_EW',
+        'Player_ID_N', 'Player_ID_S', 'Player_ID_E', 'Player_ID_W',
+    }
+    missing = sorted(required.difference(df.columns))
+    if missing:
+        st.error(
+            f"Postmortem {session_id} is missing required columns: "
+            f"{', '.join(missing)}")
+        return False
+    if df['PBN'].null_count() == len(df):
+        st.error(
+            f"Session {session_id} has no valid hand records. "
+            "Select a different game.")
+        return False
+    print_to_log_info(
+        'session_augmented_dataframe time:', time.time()-t,
+        'shape:', df.shape, 'source:', details_source)
+    report_retrieval(f"Processing {result_kind} results ... complete.")
 
     player_id_text = str(player_id)
     player_id_columns = [

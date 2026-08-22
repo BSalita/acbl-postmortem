@@ -1,24 +1,6 @@
-"""Headless access to ACBL postmortem dataframes.
+"""Headless ACBL postmortem analysis backed only by the unified Results API."""
 
-The Streamlit app (app.py) persists each fully augmented board-results
-dataframe to cache/df-{session_id}-{player_id}.parquet right after
-augmentation (see save_augmented_df_to_cache). This module is the shared,
-Streamlit-free core used by acbl_postmortem_mcp_server.py. Cache misses for
-historical club sessions are loaded directly from the pre-augmented parquet
-through the local ACBL Club API; no Streamlit generation or web scrape is
-required. It re-derives the player personalization columns
-(Boards_I_Played, My_Pair, ... -- same logic as change_game_state in app.py),
-and runs DuckDB SQL against the dataframe registered as 'self', mirroring how
-the app's SQL favorites work.
-
-Env:
-  ACBL_POSTMORTEM_CACHE_DIR  cache directory (default ./cache next to this file)
-"""
-
-import os
-import pathlib
 import re
-import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 import duckdb
@@ -26,18 +8,10 @@ import polars as pl
 
 import acbl_club_api_client as club_api
 
-_APP_DIR = pathlib.Path(__file__).resolve().parent
-CACHE_DIR = pathlib.Path(os.environ.get("ACBL_POSTMORTEM_CACHE_DIR", str(_APP_DIR / "cache")))
-
 CON_REGISTER_NAME = "self"
 DEFAULT_SQL_ROW_LIMIT = 500
 MAX_SQL_ROW_LIMIT = 2000
 MAX_SCHEMA_COLUMNS = 1000
-
-# df-{session_id}-{player_id}.parquet. Tournament session ids contain dashes
-# (e.g. 2310369-2801-2) but ACBL player numbers never do, so the player id is
-# the trailing dash-free token.
-_CACHE_FILE_RE = re.compile(r"^df-(?P<session_id>.+)-(?P<player_id>[^-]+)\.parquet$")
 
 # (player_direction, pair_direction, partner_direction, opponent_pair_direction)
 # Same tuples and macro values as change_game_state in app.py.
@@ -63,129 +37,61 @@ BOARD_SUMMARY_COLUMNS = [
 ]
 
 
-def _parse_cache_filename(name: str) -> Optional[Dict[str, str]]:
-    m = _CACHE_FILE_RE.match(name)
-    if m is None:
-        return None
-    return {"session_id": m.group("session_id"), "player_id": m.group("player_id")}
-
-
-def list_cached_postmortems(player_id: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Cached postmortems (newest file first), optionally for one player."""
-    out: List[Dict[str, Any]] = []
-    if not CACHE_DIR.is_dir():
-        return out
-    for f in CACHE_DIR.glob("df-*.parquet"):
-        parsed = _parse_cache_filename(f.name)
-        if parsed is None:
-            continue
-        if player_id is not None and parsed["player_id"] != str(player_id):
-            continue
-        stat = f.stat()
-        out.append(
-            {
-                "player_id": parsed["player_id"],
-                "session_id": parsed["session_id"],
-                "file": f.name,
-                "size_bytes": stat.st_size,
-                "cached_at": stat.st_mtime,
-            }
-        )
-    out.sort(key=lambda d: d["cached_at"], reverse=True)
-    return out
-
-
 def list_available_postmortems(player_id: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Cached sessions plus parquet-listed club games for one player.
-
-    The listing endpoint is explicitly cache/parquet-only here. Individual
-    tools resolve a requested session against the augmented postmortem parquet.
-    """
-    cached = list_cached_postmortems(player_id)
+    """Club and tournament sessions listed by the unified ACBL API."""
     if player_id is None:
-        return cached
-
-    by_session = {row["session_id"]: row for row in cached}
+        return []
+    by_session: Dict[str, Dict[str, Any]] = {}
     try:
-        games = club_api.player_club_games(
-            str(player_id), limit=2000, prefer_fresh=False)
+        club_games = club_api.player_club_games(
+            str(player_id), limit=2000, prefer_fresh=True)
     except club_api.ClubApiClientError:
-        games = {}
-    for session_id, (_source_url, details_url, description) in (games or {}).items():
+        club_games = {}
+    for session_id, (_source_url, details_url, description) in (
+        club_games or {}
+    ).items():
         sid = str(session_id)
-        if sid in by_session:
-            by_session[sid]["description"] = description
-            by_session[sid]["details_url"] = details_url
-            continue
         by_session[sid] = {
             "player_id": str(player_id),
             "session_id": sid,
-            "file": None,
-            "size_bytes": None,
-            "cached_at": None,
-            "source": "club_results_parquet listing",
+            "kind": "club",
+            "source": "unified ACBL API",
+            "description": description,
+            "details_url": details_url,
+        }
+    try:
+        tournament_sessions = club_api.player_tournament_sessions(
+            str(player_id), limit=2000, prefer_fresh=True)
+    except club_api.ClubApiClientError:
+        tournament_sessions = {}
+    for sid, (_source_url, details_url, description, row) in (
+        tournament_sessions or {}
+    ).items():
+        by_session[str(sid)] = {
+            "player_id": str(player_id),
+            "session_id": str(sid),
+            "kind": "tournament",
+            "source": "unified ACBL API",
+            "date": row.get("date"),
             "description": description,
             "details_url": details_url,
         }
 
-    def sort_key(row: Dict[str, Any]) -> Tuple[int, float]:
-        sid = str(row["session_id"])
-        return (int(sid) if sid.isdigit() else -1, row.get("cached_at") or 0)
+    def sort_key(row: Dict[str, Any]) -> str:
+        if row.get("date"):
+            return str(row["date"])
+        description = str(row.get("description") or "")
+        return description.split(",", 1)[0].strip()
 
     return sorted(by_session.values(), key=sort_key, reverse=True)
 
 
 def dataset_info() -> Dict[str, Any]:
-    cached = list_cached_postmortems()
-    return {
-        "cache_dir": str(CACHE_DIR),
-        "cached_postmortems": len(cached),
-        "players": sorted({c["player_id"] for c in cached}),
-        "note": (
-            "Reads Streamlit-generated caches when present. Historical club "
-            "cache misses are loaded directly from the pre-augmented parquet "
-            "through the ACBL Club API without Streamlit or Playwright."
-        ),
-    }
-
-
-def _resolve_cache_file(player_id: str, session_id: Optional[str] = None) -> pathlib.Path:
-    cached = list_cached_postmortems(player_id)
-    if not cached:
-        raise FileNotFoundError(
-            f"No cached postmortem for player {player_id}. Generate one first by "
-            f"loading https://acbl.postmortem.chat/?player_id={player_id} (add "
-            f"&session_id=... for a specific game)."
-        )
-    if session_id is None:
-        return CACHE_DIR / cached[0]["file"]  # newest cache file
-    for c in cached:
-        if c["session_id"] == str(session_id):
-            return CACHE_DIR / c["file"]
-    raise FileNotFoundError(
-        f"No cached postmortem for player {player_id} session {session_id}. "
-        f"Cached sessions: {[c['session_id'] for c in cached]}"
-    )
-
-
-# Small in-process cache: one postmortem parquet is ~10^4 rows x ~10^3 columns,
-# cheap enough to keep a few resident keyed by (path, mtime).
-_df_cache: Dict[Tuple[str, float], pl.DataFrame] = {}
-_df_cache_lock = threading.Lock()
-_DF_CACHE_MAX = 4
-
-
-def _read_parquet_cached(path: pathlib.Path) -> pl.DataFrame:
-    key = (str(path), path.stat().st_mtime)
-    with _df_cache_lock:
-        if key in _df_cache:
-            return _df_cache[key]
-    df = pl.read_parquet(path)
-    with _df_cache_lock:
-        if len(_df_cache) >= _DF_CACHE_MAX:
-            _df_cache.pop(next(iter(_df_cache)))
-        _df_cache[key] = df
-    return df
+    info = club_api.dataset_info()
+    info["note"] = (
+        "All sessions and postmortems come through the unified ACBL API. "
+        "The MCP never reads or generates Streamlit caches.")
+    return info
 
 
 def personalize(df: pl.DataFrame, player_id: str) -> Tuple[pl.DataFrame, Dict[str, Any]]:
@@ -244,31 +150,21 @@ def personalize(df: pl.DataFrame, player_id: str) -> Tuple[pl.DataFrame, Dict[st
 
 
 def load_postmortem(player_id: str, session_id: Optional[str] = None) -> Tuple[pl.DataFrame, Dict[str, Any]]:
-    """Load and personalize a cached or historical augmented postmortem."""
-    try:
-        path = _resolve_cache_file(str(player_id), session_id)
-    except FileNotFoundError:
-        if session_id is None:
-            raise
-        df, source = club_api.session_augmented_dataframe(session_id)
-        if df is None:
+    """Load a postmortem exclusively through the unified ACBL API."""
+    if session_id is None:
+        sessions = list_available_postmortems(str(player_id))
+        if not sessions:
             raise FileNotFoundError(
-                f"Session {session_id} is not available in the augmented "
-                "historical postmortem parquet."
-            )
-        df, meta = personalize(df, str(player_id))
-        meta["session_id"] = str(session_id)
-        meta["cache_file"] = None
-        meta["source"] = source or "historical augmented parquet"
-        return df, meta
-
-    parsed = _parse_cache_filename(path.name)
-    assert parsed is not None
-    df = _read_parquet_cached(path)
+                f"No ACBL sessions found for player {player_id}")
+        session_id = sessions[0]["session_id"]
+    df, source = club_api.session_augmented_dataframe(
+        session_id, player_id=str(player_id))
+    if df is None:
+        raise FileNotFoundError(
+            f"Postmortem data is unavailable for session {session_id}")
     df, meta = personalize(df, str(player_id))
-    meta["session_id"] = parsed["session_id"]
-    meta["cache_file"] = path.name
-    meta["source"] = "postmortem cache"
+    meta["session_id"] = str(session_id)
+    meta["source"] = source or "unified ACBL API"
     return df, meta
 
 

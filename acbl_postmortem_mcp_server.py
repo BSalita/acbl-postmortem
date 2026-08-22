@@ -5,9 +5,9 @@ Transport: streamable HTTP (endpoint /mcp) on ACBL_POSTMORTEM_MCP_PORT
 cloudflared work without session affinity. Same pattern as
 Elo_Ratings/elo_mcp_server.py.
 
-Data sources: the parquet cache written by the Streamlit app and the
-pre-augmented historical club parquet exposed by the local ACBL Club API.
-Historical cache misses do not scrape ACBL or re-run augmentation.
+Data source: the unified ACBL Results API. It resolves historical augmented
+parquet, API-owned parquet cache, and live headless builds. This MCP never
+uses Streamlit or a Streamlit-generated cache.
 
 Deployment: acbl-postmortem-mcp container, started by
 ../7nt/postmortem_start.ps1. GET /health is used by the wslc watchdog and
@@ -44,7 +44,7 @@ async def health(request: Request) -> JSONResponse:
 
 @mcp.tool()
 def acbl_postmortem_dataset_info() -> Dict[str, Any]:
-    """Summary of cached and historical ACBL postmortem availability."""
+    """Summary of unified ACBL API postmortem availability and data tiers."""
     return svc.dataset_info()
 
 
@@ -127,7 +127,7 @@ def acbl_postmortem_schema(
 if __name__ == "__main__":
     print(
         f"[acbl-postmortem-mcp] starting on :{ACBL_POSTMORTEM_MCP_PORT} "
-        f"(endpoint /mcp, health /health); cache -> {svc.CACHE_DIR}",
+        "(endpoint /mcp, health /health); source -> unified ACBL API",
         flush=True,
     )
     # Stateless + JSON responses: plain request/response tools, no session
