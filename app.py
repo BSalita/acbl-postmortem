@@ -509,6 +509,16 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
         df.filter(player_id_matches(column)).height > 0
         for column in player_id_columns
     ):
+        if explicit_session:
+            report_retrieval(
+                f"Session {session_id} does not contain player {player_id}; "
+                "ignoring the stale session selection and finding the latest "
+                "game for that player.")
+            retrieval_status.update(
+                label=f"Session {session_id} was not played by {player_id}.",
+                state="error",
+            )
+            return change_game_state(player_id, None)
         st.error(f"Player {player_id} was not found in session {session_id}.")
         return False
 
