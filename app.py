@@ -590,7 +590,8 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
                 # The monthly/quarterly monolith does not contain the newest
                 # sessions. Build only those from recent JSON/live data.
                 report_retrieval(
-                    "Club results are not available in local historical data.")
+                    f"Club result for game {session_id} is not available in "
+                    "local historical data.")
                 report_retrieval(
                     f"Checking recent local club results, then {results_url} ...")
                 try:
