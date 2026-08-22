@@ -502,6 +502,7 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
             pl.col(column)
             .cast(pl.String)
             .str.strip_chars()
+            .str.replace(r'\.0$', '')
             == player_id_text
         )
 
