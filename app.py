@@ -356,40 +356,36 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
 
     with st.spinner(f"Retrieving a list of tournament sessions for {player_id} ..."):
         t = time.time()
-        tournament_source_url = f"https://live.acbl.org/player-results/{player_id}"
         if player_id in st.session_state.tournament_session_urls_d:
             tournament_session_urls = st.session_state.tournament_session_urls_d[player_id]
             report_retrieval(
                 "Using tournament sessions already fetched in this browser session.")
         else:
-            report_retrieval(
-                f"Fetching latest tournament sessions for {tournament_source_url} "
-                "through the ACBL API ...")
             try:
                 tournament_session_urls = get_tournament_sessions_from_acbl_number(
                     player_id, acbl_api_key)
             except Exception as exc:
                 report_retrieval(
-                    f"Fetching latest tournament sessions for "
-                    f"{tournament_source_url} ... error: {exc}.")
+                    "Fetching latest tournament sessions using the ACBL "
+                    f"tournament API ... error: {exc}.")
                 st.error(
                     f"Could not retrieve tournament sessions for {player_id}: {exc}")
                 return False
         if tournament_session_urls is None:
             report_retrieval(
-                f"Fetching latest tournament sessions for "
-                f"{tournament_source_url} ... failed.")
+                "Fetching latest tournament sessions using the ACBL "
+                "tournament API ... failed.")
             st.error(f"Player number {player_id} not found.")
             return False
         if len(tournament_session_urls) == 0:
             report_retrieval(
-                f"Fetching latest tournament sessions for "
-                f"{tournament_source_url} ... no sessions found.")
+                "Fetching latest tournament sessions using the ACBL "
+                "tournament API ... no sessions found.")
             st.info(f"No tournament sessions found for {player_id}.")
         elif player_id not in st.session_state.tournament_session_urls_d:
             report_retrieval(
-                f"Fetching latest tournament sessions for "
-                f"{tournament_source_url} ... success.")
+                "Fetching latest tournament sessions using the ACBL "
+                "tournament API ... success.")
         print_to_log_info('get_tournament_sessions_from_acbl_number time:', time.time()-t) # takes 2s
     #tournament_session_urls = {} # just ignore tournament sessions for now
 
@@ -437,6 +433,25 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
                 session_id = alt_session_id
         except (ValueError, TypeError):
             pass
+
+    # A bookmarked URL can retain a session from a different player. The
+    # requested player is valid, so fall back to their newest available result
+    # instead of incorrectly reporting that the player was not found.
+    if session_id not in game_urls and session_id not in tournament_session_urls:
+        unavailable_session_id = session_id
+        if latest_club is not None and (
+            latest_tournament is None or latest_club[2] >= latest_tournament[2]
+        ):
+            session_id = latest_club[0]
+            report_retrieval(
+                f"Requested session {unavailable_session_id} is not available "
+                f"for player {player_id}; using latest club game {session_id}.")
+        elif latest_tournament is not None:
+            session_id = latest_tournament[0]
+            report_retrieval(
+                f"Requested session {unavailable_session_id} is not available "
+                f"for player {player_id}; using latest tournament session "
+                f"{session_id}.")
 
     # clear games state aninitialize values which are known to be valid at this point
     reset_game_data() # wipe out all game state data
@@ -639,7 +654,7 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
                     f.write(col+'\n')
 
     else:
-        st.error(f"Player {player_id} not found")
+        st.error(f"Session {session_id} was not found for player {player_id}.")
         return False
 
     # No more user errors possible. Everything checks out so it's safe to update the session state with new data.
