@@ -123,8 +123,7 @@ def player_club_games(
         if progress is not None:
             progress(message)
     if progress is not None and meta.get("refresh_failed"):
-        source = str(meta.get("source") or "local history")
-        progress(f"Live refresh failed; using the club-game listing from {source}.")
+        progress("Live refresh failed; falling back to local historical data.")
     elif progress is not None and not attempts:
         source = str(meta.get("source") or "local history")
         progress(

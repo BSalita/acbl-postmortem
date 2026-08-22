@@ -332,27 +332,26 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
     def report_retrieval(message: str) -> None:
         retrieval_status.write(message)
 
-    with st.spinner(f"Retrieving a list of club games for {player_id} ..."):
-        t = time.time()
-        if player_id in st.session_state.game_urls_d:
-            game_urls = st.session_state.game_urls_d[player_id]
-            report_retrieval("Using club games already fetched in this browser session.")
-        else:
-            try:
-                game_urls = club_api.player_club_games(
-                    player_id,
-                    progress=report_retrieval,
-                )
-            except club_api.ClubApiClientError as e:
-                report_retrieval(f"Club-game lookup failed: {e}.")
-                st.error(f"Could not retrieve club games for {player_id}: {e}")
-                return False
-        if game_urls is None:
-            st.error(f"Player number {player_id} not found.")
+    t = time.time()
+    if player_id in st.session_state.game_urls_d:
+        game_urls = st.session_state.game_urls_d[player_id]
+        report_retrieval("Using club games already fetched in this browser session.")
+    else:
+        try:
+            game_urls = club_api.player_club_games(
+                player_id,
+                progress=report_retrieval,
+            )
+        except club_api.ClubApiClientError as e:
+            report_retrieval(f"Club-game lookup failed: {e}.")
+            st.error(f"Could not retrieve club games for {player_id}: {e}")
             return False
-        if len(game_urls) == 0:
-            st.info(f"No club games found for {player_id}.")
-        print_to_log_info('player_club_games time:', time.time()-t) # takes 4s
+    if game_urls is None:
+        st.error(f"Player number {player_id} not found.")
+        return False
+    if len(game_urls) == 0:
+        st.info(f"No club games found for {player_id}.")
+    print_to_log_info('player_club_games time:', time.time()-t) # takes 4s
 
     with st.spinner(f"Retrieving a list of tournament sessions for {player_id} ..."):
         t = time.time()
@@ -465,7 +464,6 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
         with st.spinner(f"Collecting data for club game {session_id} and player {player_id}."):
             game_description = game_urls[session_id][2]
             results_url = game_urls[session_id][1]
-            st.text(f"{game_description}")
             t = time.time()
             report_retrieval("Looking for results in local historical data ...")
             try:
