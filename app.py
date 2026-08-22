@@ -525,7 +525,7 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
     if session_id in game_urls:
         df = None
         dfs = None
-        with st.spinner(f"Collecting data for club game {session_id} and player {player_id}."):
+        with st.container():
             game_description = game_urls[session_id][2]
             results_url = game_urls[session_id][1]
             t = time.time()
@@ -729,8 +729,17 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
     player_id_text = str(player_id)
     player_id_columns = [
         'Player_ID_N', 'Player_ID_S', 'Player_ID_E', 'Player_ID_W']
+
+    def player_id_matches(column: str) -> pl.Expr:
+        return (
+            pl.col(column)
+            .cast(pl.String)
+            .str.strip_chars()
+            == player_id_text
+        )
+
     if not any(
-        df.filter(pl.col(column).cast(pl.String) == player_id_text).height > 0
+        df.filter(player_id_matches(column)).height > 0
         for column in player_id_columns
     ):
         st.error(f"Player {player_id} was not found in session {session_id}.")
@@ -764,9 +773,7 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
 
     # Iterate over player directions
     for player_direction, pair_direction, partner_direction, opponent_pair_direction in [('North', 'NS', 'S', 'EW'), ('South', 'NS', 'N', 'EW'), ('East', 'EW', 'W', 'NS'), ('West', 'EW', 'E', 'NS')]:
-        rows = df.filter(
-            pl.col(f"Player_ID_{player_direction[0]}").cast(pl.String)
-            == player_id_text)
+        rows = df.filter(player_id_matches(f"Player_ID_{player_direction[0]}"))
         print(f"{st.session_state.player_id=} {rows.height=}")
         if rows.height > 0:
             st.session_state.player_id = player_id
