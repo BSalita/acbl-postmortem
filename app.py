@@ -543,7 +543,8 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
             results_url = game_urls[session_id][1]
             t = time.time()
             report_retrieval(
-                "Looking for club results in local historical data ...")
+                "Looking for club results in local historical data. "
+                "This may take a minute ...")
             try:
                 df, details_source = club_api.session_augmented_dataframe(session_id)
             except club_api.ClubApiClientError as e:
