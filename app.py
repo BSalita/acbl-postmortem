@@ -906,30 +906,82 @@ def apply_url_params_to_state() -> None:
             pass
 
 
-def player_id_change() -> None:
-    # todo: looks like there's some situation where this is not called because player_id_input is already set. Need to breakpoint here to determine why st.session_state.player_id isn't updated.
-    # assign changed textbox value (player_id_input) to player_id
-    player_id = st.session_state.player_id_input
-    
-    # If the new player ID is empty or the same as current, don't process
-    if not player_id or player_id == st.session_state.get('player_id'):
-        return
-    
-    # Attempt to change game state with new player ID
-    # This will load games list and auto-select the first game
+def _activate_player_id(player_id: str, original_input: str) -> None:
+    """Load one resolved player number and preserve the existing failure flow."""
     success = change_game_state(player_id, None)
-    
     if success:
-        # Success - set flag and return (Streamlit will auto-rerun after callback)
         st.session_state.player_id_just_changed = True
+        st.session_state.player_name_matches = {}
         sync_url_params_from_state()
         return
-    else:
-        # If validation failed, set a flag to handle UI reset in main flow
+    st.session_state.player_id_validation_failed = True
+    st.session_state.invalid_player_id_input = original_input
+    sync_url_params_from_state()
+
+
+def player_id_change() -> None:
+    query = str(st.session_state.player_id_input or "").strip()
+    st.session_state.player_name_matches = {}
+    st.session_state.pop("player_name_match_selection", None)
+    st.session_state.player_lookup_message = None
+    if not query:
+        return
+
+    if query.isdigit():
+        if query == st.session_state.get("player_id"):
+            return
+        _activate_player_id(query, query)
+        return
+
+    try:
+        matches = club_api.player_lookup(query)
+    except club_api.ClubApiClientError as exc:
         st.session_state.player_id_validation_failed = True
-        st.session_state.invalid_player_id_input = player_id
-        # Don't update st.session_state.player_id - keep the previous working one
-        sync_url_params_from_state()
+        st.session_state.invalid_player_id_input = query
+        st.session_state.player_lookup_message = f"Player lookup failed: {exc}"
+        return
+
+    exact = [
+        row for row in matches
+        if str(row.get("player_name") or "").casefold() == query.casefold()
+    ]
+    if len(exact) == 1:
+        row = exact[0]
+        player_id = str(row["player_number"])
+        st.session_state.player_lookup_message = (
+            f"Resolved {row.get('player_name')} to ACBL number {player_id}.")
+        _activate_player_id(player_id, query)
+        return
+    if len(matches) == 1:
+        row = matches[0]
+        player_id = str(row["player_number"])
+        st.session_state.player_lookup_message = (
+            f"Resolved {row.get('player_name')} to ACBL number {player_id}.")
+        _activate_player_id(player_id, query)
+        return
+    if matches:
+        st.session_state.player_name_matches = {
+            str(row["player_number"]): row for row in matches
+        }
+        st.session_state.player_lookup_message = (
+            f"Found {len(matches)} matching players. Select one below.")
+        return
+
+    st.session_state.player_id_validation_failed = True
+    st.session_state.invalid_player_id_input = query
+    st.session_state.player_lookup_message = (
+        f"No ACBL players matched “{query}”.")
+
+
+def player_name_match_change() -> None:
+    player_id = st.session_state.get("player_name_match_selection")
+    matches = st.session_state.get("player_name_matches") or {}
+    if not player_id or player_id not in matches:
+        return
+    row = matches[player_id]
+    st.session_state.player_lookup_message = (
+        f"Selected {row.get('player_name')} ({player_id}).")
+    _activate_player_id(player_id, str(st.session_state.player_id_input))
 
 
 
@@ -1875,11 +1927,38 @@ def create_sidebar() -> None:
         input_value = st.session_state.get('player_id_input', st.session_state.get('player_id', ''))
 
     st.sidebar.text_input(
-        "ACBL player number", 
+        "ACBL player number or name",
         value=input_value,
         on_change=player_id_change, 
-        placeholder=st.session_state.player_id_default, 
+        placeholder=f"{st.session_state.player_id_default} or Robert Salita",
         key='player_id_input')
+
+    lookup_message = st.session_state.get("player_lookup_message")
+    if lookup_message:
+        st.sidebar.caption(lookup_message)
+    player_matches = st.session_state.get("player_name_matches") or {}
+    if player_matches:
+        def player_match_label(player_number: str) -> str:
+            row = player_matches[player_number]
+            location = ", ".join(
+                str(value)
+                for value in (row.get("city"), row.get("state"))
+                if value not in (None, "")
+            )
+            label = f"{row.get('player_name')} ({player_number})"
+            if row.get("match_score") is not None:
+                label += f" — {row['match_score']:.0f}% match"
+            return f"{label} — {location}" if location else label
+
+        st.sidebar.selectbox(
+            "Matching ACBL players",
+            options=list(player_matches),
+            index=None,
+            placeholder="Select the player",
+            format_func=player_match_label,
+            on_change=player_name_match_change,
+            key="player_name_match_selection",
+        )
 
     # Handle player ID validation failure (after widget creation)
     if validation_failed:
@@ -1889,7 +1968,9 @@ def create_sidebar() -> None:
             # Create a new container with a helpful message
             st.session_state.main_section_container = st.container()
             with st.session_state.main_section_container:
-                st.info("Invalid player ID entered. Please enter a valid ACBL player number in the sidebar to generate a new report.")
+                st.info(
+                    "Player not found. Enter a valid ACBL player number or "
+                    "name in the sidebar to generate a new report.")
         # Clear SQL query mode and queries to prevent confusion
         st.session_state.sql_query_mode = False
         st.session_state.sql_queries = []
@@ -1904,7 +1985,9 @@ def create_sidebar() -> None:
             st.session_state.partner_name = None
         # Show additional error context if available
         if 'invalid_player_id_input' in st.session_state:
-            st.sidebar.error(f"Invalid player ID: {st.session_state.invalid_player_id_input}")
+            st.sidebar.error(
+                "Player not found: "
+                f"{st.session_state.invalid_player_id_input}")
             del st.session_state.invalid_player_id_input
         # Clear the validation failure flag after handling
         st.session_state.player_id_validation_failed = False
@@ -1920,7 +2003,8 @@ def create_sidebar() -> None:
 
     if st.session_state.player_id is None:
         # Show message and then fall through to Developer Settings at bottom
-        st.sidebar.info("Enter a player ID above to view game reports.")
+        st.sidebar.info(
+            "Enter an ACBL player number or name above to view game reports.")
         # Don't return early - let Developer Settings and Automated Postmortem Apps show at bottom
     else:
         # Player ID is set - show game selection and other player-specific UI.

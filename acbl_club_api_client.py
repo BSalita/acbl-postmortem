@@ -74,6 +74,25 @@ def dataset_info() -> Dict[str, Any]:
     return _get_json("/health")
 
 
+def player_lookup(query: str, limit: int = 50) -> list[Dict[str, Any]]:
+    """Resolve a player-name query to ACBL player records."""
+    try:
+        table = _get_json(
+            "/players/lookup", {"q": query.strip(), "limit": limit})
+    except ClubApiClientError as exc:
+        if exc.status_code == 404:
+            return []
+        raise
+    by_number: Dict[str, Dict[str, Any]] = {}
+    for row in table.get("rows", []):
+        number = str(row.get("player_number") or "").strip()
+        # The historical source also contains temporary local identifiers. They
+        # cannot be used to retrieve ACBL games, so do not offer them in the UI.
+        if number.isdigit():
+            by_number[number] = row
+    return list(by_number.values())
+
+
 def player_club_games(
     player_id: str,
     limit: int = 2000,

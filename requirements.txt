@@ -13,6 +13,7 @@ pandas
 polars
 numpy
 duckdb
+rapidfuzz
 
 # Web scraping and HTTP
 requests
