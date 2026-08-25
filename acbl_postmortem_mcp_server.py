@@ -5,9 +5,8 @@ Transport: streamable HTTP (endpoint /mcp) on ACBL_POSTMORTEM_MCP_PORT
 cloudflared work without session affinity. Same pattern as
 Elo_Ratings/elo_mcp_server.py.
 
-Data source: the unified ACBL Results API. It resolves historical augmented
-parquet, API-owned parquet cache, and live headless builds. This MCP never
-uses Streamlit or a Streamlit-generated cache.
+Every tool calls the first-party ACBL Postmortem REST API. This MCP process
+does not import report libraries, read parquet, or call third-party APIs.
 
 Deployment: acbl-postmortem-mcp container, started by
 ../7nt/postmortem_start.ps1. GET /health is used by the wslc watchdog and
@@ -15,37 +14,54 @@ deploy health checks.
 """
 
 import os
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 from mcp.server.mcpserver import MCPServer
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-import acbl_postmortem_service as svc
+import requests
 
 ACBL_POSTMORTEM_MCP_PORT = int(os.environ.get("ACBL_POSTMORTEM_MCP_PORT", "8511"))
+ACBL_POSTMORTEM_API_BASE_URL = os.environ.get(
+    "ACBL_POSTMORTEM_API_BASE_URL", "http://127.0.0.1:8522"
+).rstrip("/")
+_TIMEOUT_S = 300
 
 mcp = MCPServer("acbl-postmortem")
+
+
+def _get(path: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    response = requests.get(
+        f"{ACBL_POSTMORTEM_API_BASE_URL}{path}",
+        params={key: value for key, value in (params or {}).items() if value is not None},
+        timeout=_TIMEOUT_S,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
+def _post(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    response = requests.post(
+        f"{ACBL_POSTMORTEM_API_BASE_URL}{path}",
+        json=payload,
+        timeout=_TIMEOUT_S,
+    )
+    response.raise_for_status()
+    return response.json()
 
 
 @mcp.custom_route("/health", methods=["GET"])
 async def health(request: Request) -> JSONResponse:
     """Liveness probe for the wslc watchdog / deploy health check."""
-    info = svc.dataset_info()
-    return JSONResponse(
-        {
-            "status": "ok",
-            "service": "acbl-postmortem-mcp",
-            "cache_dir": info["cache_dir"],
-            "cached_postmortems": info["cached_postmortems"],
-        }
-    )
+    return JSONResponse({"service": "acbl-postmortem-mcp", "api": _get("/health")})
 
 
 @mcp.tool()
 def acbl_postmortem_dataset_info() -> Dict[str, Any]:
     """Summary of unified ACBL API postmortem availability and data tiers."""
-    return svc.dataset_info()
+    return _get("/acbl-postmortem/dataset-info")
 
 
 @mcp.tool()
@@ -56,8 +72,10 @@ def acbl_postmortem_sessions(player_id: Optional[str] = None, limit: int = 100) 
     normalized historical parquet. The boards/sql/schema tools load requested
     historical club sessions directly from the augmented parquet.
     """
-    sessions = svc.list_available_postmortems(player_id)[: max(1, min(limit, 500))]
-    return {"sessions": sessions, "count": len(sessions)}
+    return _get(
+        "/acbl-postmortem/sessions",
+        {"player_id": player_id, "limit": max(1, min(limit, 500))},
+    )
 
 
 @mcp.tool()
@@ -78,9 +96,16 @@ def acbl_postmortem_boards(
     columns: optional comma-separated column names to override the default
     summary set (discover names with acbl_postmortem_schema).
     """
-    df, meta = svc.load_postmortem(player_id, session_id)
-    cols = [c.strip() for c in columns.split(",")] if columns else None
-    return svc.board_results(df, meta, only_my_boards=only_my_boards, columns=cols, limit=limit)
+    return _get(
+        "/acbl-postmortem/boards",
+        {
+            "player_id": player_id,
+            "session_id": session_id,
+            "only_my_boards": only_my_boards,
+            "columns": columns,
+            "limit": limit,
+        },
+    )
 
 
 @mcp.tool()
@@ -88,7 +113,7 @@ def acbl_postmortem_sql(
     player_id: str,
     sql: str,
     session_id: Optional[str] = None,
-    limit: int = svc.DEFAULT_SQL_ROW_LIMIT,
+    limit: int = 500,
 ) -> Dict[str, Any]:
     """Run a DuckDB SQL query against one ACBL postmortem, registered
     as table 'self' (one row per board result, thousands of augmented columns:
@@ -103,10 +128,15 @@ def acbl_postmortem_sql(
     session_id: historical club IDs are loaded directly from augmented parquet;
     omit for the player's most recently generated cache.
     """
-    df, meta = svc.load_postmortem(player_id, session_id)
-    result = svc.run_sql(df, sql, meta, limit=limit)
-    result["meta"] = meta
-    return result
+    return _post(
+        "/acbl-postmortem/sql",
+        {
+            "player_id": player_id,
+            "sql": sql,
+            "session_id": session_id,
+            "limit": limit,
+        },
+    )
 
 
 @mcp.tool()
@@ -120,14 +150,21 @@ def acbl_postmortem_schema(
     frame has thousands of augmented columns, so pass a case-insensitive regex
     pattern (e.g. 'Pct|Score', '^DD_', 'Elo') to search for relevant ones
     before writing acbl_postmortem_sql queries."""
-    df, _ = svc.load_postmortem(player_id, session_id)
-    return svc.schema_columns(df, pattern=pattern, limit=limit)
+    return _get(
+        "/acbl-postmortem/schema",
+        {
+            "player_id": player_id,
+            "session_id": session_id,
+            "pattern": pattern,
+            "limit": limit,
+        },
+    )
 
 
 if __name__ == "__main__":
     print(
-        f"[acbl-postmortem-mcp] starting on :{ACBL_POSTMORTEM_MCP_PORT} "
-        "(endpoint /mcp, health /health); source -> unified ACBL API",
+        f"[acbl-postmortem-mcp] start {datetime.now(timezone.utc).isoformat()} "
+        f"on :{ACBL_POSTMORTEM_MCP_PORT}; api -> {ACBL_POSTMORTEM_API_BASE_URL}",
         flush=True,
     )
     # Stateless + JSON responses: plain request/response tools, no session
