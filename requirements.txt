@@ -45,9 +45,6 @@ asteval
 # Bridge game specifics
 endplay
 
-# MCP server (acbl_postmortem_mcp_server.py, streamable HTTP transport)
-mcp
-
 # Utilities
 python-dotenv
 tenacity
