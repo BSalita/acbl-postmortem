@@ -2743,6 +2743,7 @@ def write_report() -> None:
         report_game_results_webpage = f"Results Page: {st.session_state.game_results_url}"
         report_your_match_info = f"Your pair was {st.session_state.pair_id}{st.session_state.pair_direction} in section {st.session_state.section_name}. You played {st.session_state.player_direction}. Your partner was {st.session_state.partner_name} ({st.session_state.partner_id}) who played {st.session_state.partner_direction}."
         st.markdown('<div style="height: 50px;"><a id="top-of-report" name="top-of-report"></a></div>', unsafe_allow_html=True)
+        streamlitlib.render_report_status_caption(st)
         # Hidden machine-readable metadata for automation tools (e.g. acbl_postmortem_generator.py).
         # The ISO date lets the daily scheduler decide whether the player actually
         # played on a given date before sending out an email.
@@ -3029,10 +3030,8 @@ class BridgeGamePostmortemChatbot(PostmortemBase):
         write_report()
 
     def main(self):
-        """Main entry: same as base, plus Memory footer on the main page."""
+        """Main entry: same as base."""
         super().main()
-        # Memory footer on the main page (same pattern as Elo_Ratings / ffbridge apps).
-        st.caption(streamlitlib.get_memory_caption_line(st))
 
 
 def main() -> None:
