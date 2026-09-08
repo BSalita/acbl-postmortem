@@ -935,6 +935,8 @@ def player_id_change() -> None:
 
     try:
         matches = club_api.player_lookup(query)
+        matches = streamlitlib.rank_named_records(
+            matches, query, name_key="player_name")
     except club_api.ClubApiClientError as exc:
         st.session_state.player_id_validation_failed = True
         st.session_state.invalid_player_id_input = query
@@ -1929,9 +1931,11 @@ def create_sidebar() -> None:
     st.sidebar.text_input(
         "ACBL player number or name",
         value=input_value,
-        on_change=player_id_change, 
+        on_change=player_id_change,
         placeholder=f"{st.session_state.player_id_default} or Robert Salita",
-        key='player_id_input')
+        key='player_id_input',
+        help="Digits-only ACBL number, or a fuzzy player name. Accents and small typos are OK.",
+    )
 
     lookup_message = st.session_state.get("player_lookup_message")
     if lookup_message:
