@@ -935,7 +935,9 @@ def player_id_change() -> None:
 
     try:
         matches = club_api.player_lookup(query)
-        matches = streamlitlib.rank_named_records(
+        ranked = streamlitlib.rank_named_records(
+            matches, query, name_key="player_name", drop_below_threshold=True)
+        matches = ranked or streamlitlib.rank_named_records(
             matches, query, name_key="player_name")
     except club_api.ClubApiClientError as exc:
         st.session_state.player_id_validation_failed = True
@@ -2854,7 +2856,7 @@ def create_ui() -> None:
 
 
 def initialize_session_state() -> None:
-    st.set_page_config(layout="wide")
+    st.set_page_config(layout="wide", initial_sidebar_state="expanded")
     # Add this auto-scroll code
     streamlitlib.widen_scrollbars()
 
@@ -3039,6 +3041,7 @@ class BridgeGamePostmortemChatbot(PostmortemBase):
 
 
 def main() -> None:
+    st.set_page_config(layout="wide", initial_sidebar_state="expanded")
     if 'app' not in st.session_state:
         st.session_state.app = BridgeGamePostmortemChatbot()
     st.session_state.app.main()
