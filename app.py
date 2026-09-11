@@ -2150,12 +2150,16 @@ def create_sidebar() -> None:
             #                     ups.append(up)
             #             # ask_questions_without_context(ups, st.session_state.ai_api)
 
-    # Automated Postmortem Apps - Always show (above Developer Settings at bottom of sidebar)
+    # Other Morty websites - Always show (above Developer Settings at bottom of sidebar)
     st.sidebar.markdown("---")
-    st.sidebar.markdown("**Automated Postmortem Apps**")
+    st.sidebar.markdown("**Other Morty websites**")
+    st.sidebar.markdown("🔗 [ACBL Elo Ratings](https://acbl-elo.7nt.info)")
     st.sidebar.markdown("🔗 [ACBL Postmortem](https://acbl.postmortem.chat)")
-    st.sidebar.markdown("🔗 [French ffbridge Postmortem](https://ffbridge.postmortem.chat)")
-    st.sidebar.markdown("🔗 [Calculate PBN](https://pbn.postmortem.chat)")
+    st.sidebar.markdown("🔗 [ACBL Statistics](https://acbl-stats.7nt.info)")
+    st.sidebar.markdown("🔗 [FFBridge Elo Ratings](https://ffbridge-elo.7nt.info)")
+    st.sidebar.markdown("🔗 [FFBridge Postmortem](https://ffbridge.postmortem.chat)")
+    st.sidebar.markdown("🔗 [FFBridge Statistics](https://ffbridge-stats.7nt.info)")
+    st.sidebar.markdown("🔗 [PBN/LIN Postmortem](https://pbn.postmortem.chat)")
 
     # Developer Settings - Always show regardless of player_id (at very bottom of sidebar)
     with st.sidebar.expander('Developer Settings', False):
