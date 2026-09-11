@@ -2011,7 +2011,7 @@ def create_sidebar() -> None:
         # Show message and then fall through to Developer Settings at bottom
         st.sidebar.info(
             "Enter an ACBL player number or name above to view game reports.")
-        # Don't return early - let Developer Settings and Automated Postmortem Apps show at bottom
+        # Don't return early - let Developer Settings and Other Morty websites show at bottom
     else:
         # Player ID is set - show game selection and other player-specific UI.
         # Compute selectbox indices from the currently active session_id so a
