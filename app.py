@@ -154,7 +154,7 @@ for _p in _resolved_libs:
 import acbl_club_api_client as club_api
 import streamlitlib # must be placed after sys.path.append. vscode re-format likes to move this to the top
 from mlBridge.mlBridgeLib import pd_options_display, contract_classes, cast_numeric_display_columns # must be placed after sys.path.append. vscode re-format likes to move this to the top
-from mlBridge.mlBridgePostmortemLib import PostmortemBase
+from mlBridge.mlBridgePostmortemLib import PostmortemBase, git_build_stamp
 
 # override pandas display options
 pd_options_display()
@@ -2885,7 +2885,7 @@ def initialize_session_state() -> None:
         'use_historical_data': False,
         'con_register_name': 'self',
         'main_section_container': st.empty(),
-        'app_datetime': datetime.fromtimestamp(pathlib.Path(__file__).stat().st_mtime, tz=timezone.utc).strftime('%Y-%m-%d %H:%M:%S %Z'),
+        'app_datetime': git_build_stamp(pathlib.Path(__file__)),
         'current_datetime': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         'player_id_default': '2663279',
     }
