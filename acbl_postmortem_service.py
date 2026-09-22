@@ -30,9 +30,10 @@ _SEAT_TUPLES = (
 # singular ParContract column. Do not silently treat them as interchangeable:
 # a board can have multiple equally optimal par contracts.
 BOARD_SUMMARY_COLUMNS = [
-    "Board", "Contract", "Declarer_Direction", "Declarer_ID", "Declarer_Name",
+    "Board", "Dealer", "Vul", "Contract", "Declarer_Direction", "Declarer_ID", "Declarer_Name",
     "Result", "Tricks", "Score_NS", "Score_EW", "Pct_NS", "Pct_EW",
     "MP_NS", "MP_EW", "MP_Top", "Par_NS", "ParContract",
+    "DD_Score_NS", "DD_Score_EW", "EV_Pct_Max_NS", "EV_Pct_Max_EW",
     "Pair_Number_NS", "Pair_Number_EW", "PBN",
 ]
 
