@@ -97,11 +97,10 @@ def main() -> int:
     print(f"Using Chrome profile: {profile_dir.resolve()}")
 
     with sync_playwright() as p:
-        # Keep flags identical to mlBridgeAcblLib.create_acbl_browser_context
-        # (except window position: the solve window must be on-screen so a
-        # human can click). cf_clearance is bound to the browser fingerprint,
-        # so solving with a different launch than the scraper's can yield a
-        # cookie the scraper cannot use.
+        # Keep flags close to mlBridgeAcblLib.create_acbl_browser_context.
+        # Both windows stay on-screen. cf_clearance is bound to the browser
+        # fingerprint, so solving with a different launch than the scraper's
+        # can yield a cookie the scraper cannot use.
         context = p.chromium.launch_persistent_context(
             user_data_dir=str(profile_dir),
             channel='chrome',
