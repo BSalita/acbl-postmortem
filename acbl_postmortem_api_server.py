@@ -57,6 +57,7 @@ def boards(
     columns: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=5000),
 ) -> dict:
+    """Default columns include Par_Contract_NS, Par_Contract_EW, and Is_Sacrifice_Opportunity when the frame has them."""
     frame, meta = _run(service.load_postmortem, player_id, session_id)
     selected = [column.strip() for column in columns.split(",")] if columns else None
     return _run(
