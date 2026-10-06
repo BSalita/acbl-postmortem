@@ -96,13 +96,30 @@ def dataset_info() -> Dict[str, Any]:
     return info
 
 
+def _normalize_player_id_value(value: Any) -> str:
+    text = str(value).strip()
+    if text.endswith('.0'):
+        text = text[:-2]
+    return text
+
+
+def _player_id_eq(column: str, value: Any) -> pl.Expr:
+    """Compare a player-id column to a value regardless of i32 vs string dtype."""
+    return (
+        pl.col(column)
+        .cast(pl.String)
+        .str.strip_chars()
+        .str.replace(r'\.0$', '')
+        == _normalize_player_id_value(value)
+    )
+
+
 def personalize(df: pl.DataFrame, player_id: str) -> Tuple[pl.DataFrame, Dict[str, Any]]:
     """Add the player-centric flag columns exactly as change_game_state does."""
-    pid = str(player_id)
+    pid = _normalize_player_id_value(player_id)
     for player_direction, pair_direction, partner_direction, opponent_pair_direction in _SEAT_TUPLES:
         seat = player_direction[0]
-        rows = df.filter(
-            pl.col(f"Player_ID_{seat}").cast(pl.String).str.strip_chars() == pid)
+        rows = df.filter(_player_id_eq(f"Player_ID_{seat}", pid))
         if rows.height == 0:
             continue
         section_name = rows["section_name"][0]
@@ -121,8 +138,8 @@ def personalize(df: pl.DataFrame, player_id: str) -> Tuple[pl.DataFrame, Dict[st
             pl.col("My_Pair").alias("Boards_I_Played"),
             pl.col("My_Pair").alias("Boards_We_Played"),
             pl.col("My_Pair").alias("Our_Boards"),
-            (pl.col("My_Pair") & (pl.col("Declarer_ID") == pid)).alias("Boards_I_Declared"),
-            (pl.col("My_Pair") & (pl.col("Declarer_ID") == partner_id)).alias("Boards_Partner_Declared"),
+            (pl.col("My_Pair") & _player_id_eq("Declarer_ID", pid)).alias("Boards_I_Declared"),
+            (pl.col("My_Pair") & _player_id_eq("Declarer_ID", partner_id)).alias("Boards_Partner_Declared"),
             (
                 pl.col("My_Pair")
                 & (

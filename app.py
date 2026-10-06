@@ -257,6 +257,24 @@ def _normalize_session_id_arg(session_id: Any) -> Any:
     return session_id
 
 
+def _normalize_player_id_value(value: Any) -> str:
+    text = str(value).strip()
+    if text.endswith('.0'):
+        text = text[:-2]
+    return text
+
+
+def _player_id_eq(column: str, value: Any) -> pl.Expr:
+    """Compare a player-id column to a value regardless of i32 vs string dtype."""
+    return (
+        pl.col(column)
+        .cast(pl.String)
+        .str.strip_chars()
+        .str.replace(r'\.0$', '')
+        == _normalize_player_id_value(value)
+    )
+
+
 def _result_entry_date(entry: Tuple[Any, ...]) -> datetime:
     """Parse the leading date from a club/tournament result description."""
     description = str(entry[2]) if len(entry) > 2 else ""
@@ -497,13 +515,7 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
         'Player_ID_N', 'Player_ID_S', 'Player_ID_E', 'Player_ID_W']
 
     def player_id_matches(column: str) -> pl.Expr:
-        return (
-            pl.col(column)
-            .cast(pl.String)
-            .str.strip_chars()
-            .str.replace(r'\.0$', '')
-            == player_id_text
-        )
+        return _player_id_eq(column, player_id_text)
 
     if not any(
         df.filter(player_id_matches(column)).height > 0
@@ -601,8 +613,8 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
                 (pl.col('My_Pair')).alias('Boards_I_Played'),
                 (pl.col('My_Pair')).alias('Boards_We_Played'),
                 (pl.col('My_Pair')).alias('Our_Boards'),
-                (pl.col('My_Pair') & (pl.col('Declarer_ID') == st.session_state.player_id)).alias('Boards_I_Declared'),
-                (pl.col('My_Pair') & (pl.col('Declarer_ID') == st.session_state.partner_id)).alias('Boards_Partner_Declared'),
+                (pl.col('My_Pair') & _player_id_eq('Declarer_ID', st.session_state.player_id)).alias('Boards_I_Declared'),
+                (pl.col('My_Pair') & _player_id_eq('Declarer_ID', st.session_state.partner_id)).alias('Boards_Partner_Declared'),
                 (pl.col('My_Pair') & ((pl.col('Declarer_Direction') == opponent_pair_direction[0]) | (pl.col('Declarer_Direction') == opponent_pair_direction[1]))).alias('Boards_Opponent_Declared')
             ])
             df = df.with_columns([
@@ -1699,11 +1711,11 @@ def ensure_board_flags(df: pl.DataFrame) -> pl.DataFrame:
         if 'Declarer_ID' in df.columns:
             if 'Boards_I_Declared' not in df.columns and st.session_state.get('player_id'):
                 df = df.with_columns(
-                    (pl.col('My_Pair') & (pl.col('Declarer_ID') == st.session_state.player_id)).alias('Boards_I_Declared')
+                    (pl.col('My_Pair') & _player_id_eq('Declarer_ID', st.session_state.player_id)).alias('Boards_I_Declared')
                 )
             if 'Boards_Partner_Declared' not in df.columns and st.session_state.get('partner_id'):
                 df = df.with_columns(
-                    (pl.col('My_Pair') & (pl.col('Declarer_ID') == st.session_state.partner_id)).alias('Boards_Partner_Declared')
+                    (pl.col('My_Pair') & _player_id_eq('Declarer_ID', st.session_state.partner_id)).alias('Boards_Partner_Declared')
                 )
             if 'Boards_Opponent_Declared' not in df.columns and st.session_state.get('opponent_pair_direction'):
                 opponent_pair_direction = st.session_state.opponent_pair_direction
