@@ -1469,11 +1469,18 @@ def Predict_Game_Results(df: Any) -> Optional[Any]:
     # This handles cases where the exact game date doesn't exist in the ELO data
     # ELO tracks a player's rating across all games, so we use the last known rating
     for direction in 'NESW':
-        # Select only the exact columns we need to avoid conflicts
+        # Session frames from the augmented parquet already carry MasterPoints_*.
+        # Joining that name again makes Polars suffix it *_right and the assert below fires.
+        masterpoints_col = f'MasterPoints_{direction}'
+        masterpoints_from_elo = f'{masterpoints_col}__from_elo'
+        masterpoints_name = (
+            masterpoints_from_elo if masterpoints_col in df.columns else masterpoints_col
+        )
         elo_cols = player_elo_df_dedup.select(['Date','Player_ID','Elo_N','Elo_R_EventStart','MasterPoints']).rename({
+            'Player_ID': f'Player_ID_{direction}',
             'Elo_R_EventStart': f'Elo_R_{direction}_EventStart',
             'Elo_N': f'Elo_N_{direction}',
-            'MasterPoints': f'MasterPoints_{direction}',
+            'MasterPoints': masterpoints_name,
         }).with_columns(pl.col('Date').cast(pl.Date)) # Ensure Date type matches for join
         
         # Use join_asof to get the most recent ELO rating on or before the game date
@@ -1481,11 +1488,15 @@ def Predict_Game_Results(df: Any) -> Optional[Any]:
             elo_cols, 
             left_on='Date',
             right_on='Date',
-            by_left=f'Player_ID_{direction}',
-            by_right='Player_ID',
+            by=f'Player_ID_{direction}',
             strategy='backward'  # Get the most recent date <= game date
         )
-        assert df.select(pl.col(f'^.*_right$')).is_empty()
+        if masterpoints_from_elo in df.columns:
+            df = df.with_columns(
+                pl.coalesce(pl.col(masterpoints_col), pl.col(masterpoints_from_elo)).alias(masterpoints_col)
+            ).drop(masterpoints_from_elo)
+        right_cols = df.select(pl.col('^.*_right$')).columns
+        assert not right_cols, f"Player Elo join produced duplicate columns: {right_cols}"
         print(f"DEBUG: After joining {direction}, null count for Elo_N_{direction}: {df[f'Elo_N_{direction}'].null_count()}")
     # Verify no row multiplication
     if len(df) != initial_row_count:
@@ -1519,7 +1530,8 @@ def Predict_Game_Results(df: Any) -> Optional[Any]:
         # Drop the temporary string column used for joining
         df = df.drop(f'Pair_IDs_{pair}_Sorted_Str')
         
-        assert df.select(pl.col(f'^.*_right$')).is_empty()
+        right_cols = df.select(pl.col('^.*_right$')).columns
+        assert not right_cols, f"Pair Elo join produced duplicate columns: {right_cols}"
         print(f"DEBUG: After joining {pair}, null count for Elo_N_{pair}: {df[f'Elo_N_{pair}'].null_count()}")
 
     # Final verification
