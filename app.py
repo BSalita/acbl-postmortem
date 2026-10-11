@@ -1385,28 +1385,7 @@ def Predict_Game_Results(df: Any) -> Optional[Any]:
 
     club_or_tournament = 'club' if 'club' in st.session_state.game_results_url else 'tournament'
 
-    def to_pl_dtype(s: str):
-        mapping = {
-            'Float32': pl.Float32,
-            'Float64': pl.Float64,
-            'Int8': pl.Int8,
-            'Int16': pl.Int16,
-            'Int32': pl.Int32,
-            'Int64': pl.Int64,
-            'UInt8': pl.UInt8,
-            'UInt16': pl.UInt16,
-            'UInt32': pl.UInt32,
-            'UInt64': pl.UInt64,
-            'Boolean': pl.Boolean,
-            'Categorical': pl.Categorical,
-            'Utf8': pl.Utf8,
-            'String': pl.Utf8,
-            'Date': pl.Date,
-            'Datetime': pl.Datetime,
-        }
-        if s not in mapping:
-            raise ValueError(f"Unknown dtype '{s}' - add it to to_pl_dtype mapping")
-        return mapping[s]
+    to_pl_dtype = mlBridgeAiLib.polars_dtype_from_str
 
     assert df.select(pl.col('^Elo_.*$')).is_empty(), f"Oops. Found Elo columns in df: {df.select(pl.col('^Elo_.*$')).columns}"
     # takes 3s/0s for 13m/1m rows by 5 columns creating a 132MB/1MB? file.
@@ -1543,6 +1522,11 @@ def Predict_Game_Results(df: Any) -> Optional[Any]:
     # Final verification
     if len(df) != initial_row_count:
         print(f"WARNING: Final row count is {len(df)}, expected {initial_row_count}!")
+
+    # Live API builds omit game_date. Historical frames carry it as Date at
+    # midnight, and a null scales to an extreme input rather than a neutral one.
+    if 'Date' in df.columns and ('game_date' not in df.columns or df['game_date'].is_null().all()):
+        df = df.with_columns(pl.col('Date').cast(pl.Datetime('us')).alias('game_date'))
 
     for y_name in ['Declarer_Direction', 'Contract', 'Pct_NS']:
         model_name = f'acbl_{club_or_tournament}_predicted_{y_name.lower()}_torch_model'
