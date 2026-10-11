@@ -264,15 +264,23 @@ def _normalize_player_id_value(value: Any) -> str:
     return text
 
 
-def _player_id_eq(column: str, value: Any) -> pl.Expr:
-    """Compare a player-id column to a value regardless of i32 vs string dtype."""
+def _player_id_key(column: str) -> pl.Expr:
+    """Normalize a player-id column to a stripped string.
+
+    Club frames and Elo lookups disagree: historical parquet stores i32,
+    while some API frames store strings (sometimes with a trailing '.0').
+    """
     return (
         pl.col(column)
-        .cast(pl.String)
+        .cast(pl.String, strict=False)
         .str.strip_chars()
         .str.replace(r'\.0$', '')
-        == _normalize_player_id_value(value)
     )
+
+
+def _player_id_eq(column: str, value: Any) -> pl.Expr:
+    """Compare a player-id column to a value regardless of i32 vs string dtype."""
+    return _player_id_key(column) == _normalize_player_id_value(value)
 
 
 def _result_entry_date(entry: Tuple[Any, ...]) -> datetime:
@@ -1417,9 +1425,14 @@ def Predict_Game_Results(df: Any) -> Optional[Any]:
     # Keep the latest (highest Elo_N) rating when a player has multiple records for same date
     player_elo_df_dedup = (
         player_elo_df
+        .with_columns(_player_id_key('Player_ID').alias('Player_ID'))
         .sort(['Date', 'Player_ID', 'Elo_N'], descending=[False, False, True])
         .unique(subset=['Date', 'Player_ID'], keep='first', maintain_order=True)
     )
+    df = df.with_columns([
+        _player_id_key(f'Player_ID_{direction}').alias(f'Player_ID_{direction}')
+        for direction in 'NESW'
+    ])
     # todo: change elo creation so there's a sorted Pair_IDs column already existing?
     # Convert list to sorted string for joining (join_asof doesn't support list columns)
     pair_elo_df = pair_elo_df.with_columns(
