@@ -1512,9 +1512,15 @@ def Predict_Game_Results(df: Any) -> Optional[Any]:
             'Elo_N': f'Elo_N_{pair}',
         }).with_columns(pl.col('Date').cast(pl.Date))
         
-        # Create sorted string version of Pair_IDs for joining
+        # Pair_IDs_* is a list of i32 in historical parquet and a list of
+        # strings in some API frames. list.join only accepts strings, and the
+        # Elo lookup key is those ids sorted as text (see Pair_IDs_Sorted_Str).
         df = df.with_columns(
-            pl.col(f'Pair_IDs_{pair}').list.sort().list.join('-').alias(f'Pair_IDs_{pair}_Sorted_Str')
+            pl.col(f'Pair_IDs_{pair}')
+            .cast(pl.List(pl.String))
+            .list.sort()
+            .list.join('-')
+            .alias(f'Pair_IDs_{pair}_Sorted_Str')
         )
         
         # Use join_asof to get the most recent ELO rating on or before the game date
