@@ -306,6 +306,89 @@ def _latest_result_entry(
     return key, entry, _result_entry_date(entry)
 
 
+def _ordered_result_entries(
+    entries: Dict[Any, Tuple[Any, ...]],
+) -> List[Tuple[Any, Tuple[Any, ...]]]:
+    """Newest description date first. Equal dates keep the original order."""
+    return sorted(
+        entries.items(),
+        key=lambda item: _result_entry_date(item[1]),
+        reverse=True,
+    )
+
+
+def _result_select_options(
+    entries: Dict[Any, Tuple[Any, ...]],
+) -> List[str]:
+    """Label the newest result Latest. Older results stay id, description."""
+    options: List[str] = []
+    for index, (key, entry) in enumerate(_ordered_result_entries(entries)):
+        description = entry[2] if len(entry) > 2 else ""
+        if index == 0:
+            options.append(f"Latest, {description}" if description else "Latest")
+        else:
+            options.append(f"{key}, {description}")
+    return options
+
+
+def _session_id_from_result_option(
+    selection: str,
+    entries: Dict[Any, Tuple[Any, ...]],
+) -> Any:
+    token = str(selection).split(",")[0].strip()
+    if token.lower() == "latest":
+        latest = _latest_result_entry(entries)
+        return None if latest is None else latest[0]
+    if token.isdigit():
+        return int(token)
+    return token
+
+
+def _overall_latest_session_id() -> Any:
+    """Most recent club game or tournament session, matching change_game_state."""
+    player_id = st.session_state.get("player_id")
+    if player_id is None:
+        return None
+    games = (st.session_state.get("game_urls_d") or {}).get(player_id) or {}
+    tournaments = (st.session_state.get("tournament_session_urls_d") or {}).get(player_id) or {}
+    latest_club = _latest_result_entry(games)
+    latest_tournament = _latest_result_entry(tournaments)
+    if latest_club is not None and (
+        latest_tournament is None or latest_club[2] >= latest_tournament[2]
+    ):
+        return latest_club[0]
+    if latest_tournament is not None:
+        return latest_tournament[0]
+    return None
+
+
+def _serialize_session_id(value: Any) -> Optional[str]:
+    """Write session_id=latest when the open game is the most recent one."""
+    if value is None or value == "":
+        return None
+    latest = _overall_latest_session_id()
+    if latest is not None and str(latest) == str(value):
+        return "latest"
+    return str(value)
+
+
+def _result_select_index(
+    entries: Dict[Any, Tuple[Any, ...]],
+    current_sid: Any,
+    *,
+    default_index: Optional[int],
+) -> Optional[int]:
+    ordered = _ordered_result_entries(entries)
+    if not ordered:
+        return None
+    if current_sid is None:
+        return default_index
+    for index, (key, _entry) in enumerate(ordered):
+        if str(key) == str(current_sid):
+            return index
+    return None
+
+
 def change_game_state(player_id: str, session_id: str) -> None: # todo: rename to session_id?
     session_id = _normalize_session_id_arg(session_id)
 
@@ -832,7 +915,7 @@ def _set_query_param(name: str, value: Any) -> None:
 def sync_url_params_from_state() -> None:
     """Write the currently selected sidebar options back to the URL query string."""
     _set_query_param('player_id', st.session_state.get('player_id'))
-    _set_query_param('session_id', st.session_state.get('session_id'))
+    _set_query_param('session_id', _serialize_session_id(st.session_state.get('session_id')))
     show_sql = st.session_state.get('show_sql_query')
     _set_query_param(
         'show_sql_query',
@@ -985,8 +1068,9 @@ def club_session_id_change() -> None:
     #st.session_state.tournament_session_ids_selectbox = None # clear tournament index whenever club index changes. todo: doesn't seem to update selectbox with new index.
     selection = st.session_state.club_session_ids_selectbox
     if selection is not None:
-        session_id = int(selection.split(',')[0]) # split selectbox item on commas. only want first split.
-        if not change_game_state(st.session_state.player_id, session_id):
+        games = (st.session_state.get("game_urls_d") or {}).get(st.session_state.player_id, {})
+        session_id = _session_id_from_result_option(selection, games)
+        if session_id is None or not change_game_state(st.session_state.player_id, session_id):
             st.session_state.session_id = None
     sync_url_params_from_state()
 
@@ -995,8 +1079,11 @@ def tournament_session_id_change() -> None:
     #st.session_state.club_session_ids_selectbox = None # clear club index whenever tournament index changes. todo: doesn't seem to update selectbox with new index.
     selection = st.session_state.tournament_session_ids_selectbox
     if selection is not None:
-        session_id = selection.split(',')[0] # split selectbox item on commas. only want first split.
-        if not change_game_state(st.session_state.player_id, session_id):
+        sessions = (st.session_state.get("tournament_session_urls_d") or {}).get(
+            st.session_state.player_id, {}
+        )
+        session_id = _session_id_from_result_option(selection, sessions)
+        if session_id is None or not change_game_state(st.session_state.player_id, session_id):
             st.session_state.session_id = None
     sync_url_params_from_state()
 
@@ -2003,35 +2090,41 @@ def create_sidebar() -> None:
         player_games = st.session_state.game_urls_d.get(st.session_state.player_id, {})
         player_tournaments = st.session_state.tournament_session_urls_d.get(st.session_state.player_id, {})
         current_sid = st.session_state.get('session_id')
+        club_options = _result_select_options(player_games)
+        tournament_options = _result_select_options(player_tournaments)
+        club_index = _result_select_index(player_games, current_sid, default_index=0)
+        tournament_index = _result_select_index(
+            player_tournaments, current_sid, default_index=None
+        )
 
-        club_index = 0 if player_games else None
-        tournament_index = None
-        if current_sid is not None:
-            sid_str = str(current_sid)
-            for i, key in enumerate(player_games.keys()):
-                if str(key) == sid_str:
-                    club_index = i
-                    break
-            for i, key in enumerate(player_tournaments.keys()):
-                if str(key) == sid_str:
-                    tournament_index = i
-                    break
+        def _show_result_selectbox(label, options, index, on_change, key):
+            desired = None if index is None or not options else options[index]
+            select_kwargs = {
+                "options": options,
+                "on_change": on_change,
+                "key": key,
+            }
+            if key in st.session_state:
+                if st.session_state.get(key) != desired:
+                    st.session_state[key] = desired
+            else:
+                select_kwargs["index"] = index
+            st.sidebar.selectbox(label, **select_kwargs)
 
-        st.sidebar.selectbox(
+        _show_result_selectbox(
             "Choose a club game.",
-            index=club_index,
-            options=[f"{k}, {v[2]}" for k, v in player_games.items()],
-            on_change=club_session_id_change,
-            key='club_session_ids_selectbox',
-        )  # options are event_id + event description
-
-        st.sidebar.selectbox(
+            club_options,
+            club_index,
+            club_session_id_change,
+            "club_session_ids_selectbox",
+        )
+        _show_result_selectbox(
             "Choose a tournament session.",
-            index=tournament_index,
-            options=[f"{k}, {v[2]}" for k, v in player_tournaments.items()],
-            on_change=tournament_session_id_change,
-            key='tournament_session_ids_selectbox',
-        )  # options are event_id + event description
+            tournament_options,
+            tournament_index,
+            tournament_session_id_change,
+            "tournament_session_ids_selectbox",
+        )
 
         # Check if player ID just changed and we should auto-generate report for the first game
         if st.session_state.get('player_id_just_changed', False):
