@@ -1986,10 +1986,29 @@ def run_ai_predictions_now() -> None:
     # st.session_state.ai_api = DEFAULT_AI_MODEL
 
 
+def render_sidebar_brand(title: str) -> None:
+    """Gif and short title at the top of the sidebar, as in MortyBridgeChatbot."""
+    logo_url = st.session_state.get(
+        "assistant_logo",
+        "https://github.com/BSalita/acbl-postmortem/blob/master/assets/logo_assistant.gif?raw=true",
+    )
+    st.sidebar.markdown(
+        (
+            '<div style="display:flex;align-items:center;gap:0.6rem;margin:0 0 0.75rem 0;">'
+            f'<img src="{logo_url}" alt="Morty" width="40" height="40" '
+            'style="width:2.5rem;height:2.5rem;border-radius:50%;flex:0 0 auto;">'
+            f'<div style="font-size:1.05rem;font-weight:700;line-height:1.25;">{title}</div>'
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
 def create_sidebar() -> None:
     
     t = time.time()
 
+    render_sidebar_brand("ACBL Postmortem")
     st.sidebar.caption(f"Build:{st.session_state.app_datetime}")
 
     # Check if we need to handle validation failure
