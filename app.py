@@ -972,6 +972,7 @@ def _activate_player_id(player_id: str, original_input: str) -> None:
     if success:
         st.session_state.player_id_just_changed = True
         st.session_state.player_name_matches = {}
+        st.session_state.pop("player_name_query", None)
         sync_url_params_from_state()
         return
     st.session_state.player_id_validation_failed = True
@@ -983,6 +984,7 @@ def player_id_change() -> None:
     query = str(st.session_state.player_id_input or "").strip()
     st.session_state.player_name_matches = {}
     st.session_state.pop("player_name_match_selection", None)
+    st.session_state.pop("player_name_query", None)
     st.session_state.player_lookup_message = None
     if not query:
         return
@@ -1027,8 +1029,8 @@ def player_id_change() -> None:
         st.session_state.player_name_matches = {
             str(row["player_number"]): row for row in matches
         }
-        st.session_state.player_lookup_message = (
-            f"Found {len(matches)} matching players. Select one below.")
+        st.session_state.player_name_query = query
+        st.session_state.player_lookup_message = None
         return
 
     st.session_state.player_id_validation_failed = True
@@ -2010,11 +2012,16 @@ def create_sidebar() -> None:
         help="Digits-only ACBL number, or a fuzzy player name. Accents and small typos are OK.",
     )
 
-    lookup_message = st.session_state.get("player_lookup_message")
-    if lookup_message:
-        st.sidebar.caption(lookup_message)
+    current_query = str(st.session_state.get("player_id_input") or "").strip()
+    searched_name = str(st.session_state.get("player_name_query") or "").strip()
     player_matches = st.session_state.get("player_name_matches") or {}
-    if player_matches:
+    show_match_selectbox = (
+        len(player_matches) > 1
+        and bool(current_query)
+        and not current_query.isdigit()
+        and current_query == searched_name
+    )
+    if show_match_selectbox:
         def player_match_label(player_number: str) -> str:
             row = player_matches[player_number]
             location = ", ".join(
@@ -2036,6 +2043,10 @@ def create_sidebar() -> None:
             on_change=player_name_match_change,
             key="player_name_match_selection",
         )
+
+    lookup_message = st.session_state.get("player_lookup_message")
+    if lookup_message:
+        st.sidebar.caption(lookup_message)
 
     # Handle player ID validation failure (after widget creation)
     if validation_failed:
