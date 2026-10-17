@@ -155,6 +155,7 @@ import acbl_club_api_client as club_api
 import streamlitlib # must be placed after sys.path.append. vscode re-format likes to move this to the top
 from mlBridge.mlBridgeLib import pd_options_display, contract_classes, cast_numeric_display_columns # must be placed after sys.path.append. vscode re-format likes to move this to the top
 from mlBridge.mlBridgePostmortemLib import PostmortemBase, git_build_stamp
+from mlBridge.postmortem_section_help import section_help_for_players
 
 # override pandas display options
 pd_options_display()
@@ -2902,8 +2903,13 @@ def write_report() -> None:
             for i, prompt in enumerate(stat['prompts']):
                 if 'sql' in prompt and prompt['sql']:
                     if i == 0:
-                        streamlit_chat.message(f"Morty: {stat['help']}", key=f'morty_sql_query_{sql_query_count}', logo=st.session_state.assistant_logo)
-                        pdf_assets.append(f"### {stat['help']}")
+                        section_help = section_help_for_players(
+                            stat.get("help") or "",
+                            str(st.session_state.get("player_name") or ""),
+                            str(st.session_state.get("partner_name") or ""),
+                        )
+                        streamlit_chat.message(f"Morty: {section_help}", key=f'morty_sql_query_{sql_query_count}', logo=st.session_state.assistant_logo)
+                        pdf_assets.append(f"### {section_help}")
                     prompt_sql = prompt['sql']
                     sql_query = process_prompt_macros(prompt_sql)
                     try:
