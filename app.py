@@ -1618,6 +1618,7 @@ def Predict_Game_Results(df: Any) -> Optional[Any]:
     if 'Date' in df.columns and ('game_date' not in df.columns or df['game_date'].is_null().all()):
         df = df.with_columns(pl.col('Date').cast(pl.Datetime('us')).alias('game_date'))
 
+    class_probabilities = {}
     for y_name in ['Declarer_Direction', 'Contract', 'Pct_NS']:
         model_name = f'acbl_{club_or_tournament}_predicted_{y_name.lower()}_torch_model'
         with st.spinner(f"Predicting {y_name}..."):
@@ -1650,8 +1651,15 @@ def Predict_Game_Results(df: Any) -> Optional[Any]:
                 model_name,
                 df,
                 top_k=5 if y_name == 'Contract' else 1,
-                return_probs=(y_name == 'Contract')
+                return_probs=(y_name in ('Contract', 'Declarer_Direction'))
             )
+            if y_name in ('Contract', 'Declarer_Direction'):
+                class_to_idx = schema['class_to_idx']
+                classes = sorted(class_to_idx, key=class_to_idx.get)
+                class_probabilities[y_name] = (
+                    classes,
+                    pred_df[f'{y_name}_Probs'].list.to_array(len(classes)).to_numpy(),
+                )
 
             # Debug prediction head/tail and stats for Pct_NS
             try:
@@ -1766,15 +1774,29 @@ def Predict_Game_Results(df: Any) -> Optional[Any]:
                     (pl.col(y_ew) - pl.col(f'{y_ew}_Pred')).alias(f'{y_ew}_Pred_Error'),
                     (pl.col(y_ew) - pl.col(f'{y_ew}_Pred')).abs().alias(f'{y_ew}_Pred_Absolute_Error'),
                 ])
-            elif y_name == 'Declarer_Direction' and f'{y_name}_Pred' in df.columns:
-                df = df.with_columns([
-                    pl.struct([f'{y_name}_Pred', 'Player_ID_N', 'Player_ID_E', 'Player_ID_S', 'Player_ID_W'])
-                      .map_elements(lambda row: row[f'Player_ID_{row[f"{y_name}_Pred"]}'] if row[f"{y_name}_Pred"] in 'NESW' else None, return_dtype=pl.String)
-                      .alias('Declarer_ID_Pred'),
-                    pl.struct([f'{y_name}_Pred', 'Player_Name_N', 'Player_Name_E', 'Player_Name_S', 'Player_Name_W'])
-                      .map_elements(lambda row: row[f'Player_Name_{row[f"{y_name}_Pred"]}'] if row[f"{y_name}_Pred"] in 'NESW' else None, return_dtype=pl.String)
-                      .alias('Declarer_Name_Pred'),
-                ])
+
+    # One contract and its declarer from both models, so they always agree.
+    # A passed-out board has no declarer (null, as in Declarer_Direction).
+    if 'Contract' in class_probabilities and 'Declarer_Direction' in class_probabilities:
+        from mlBridge.ffbridge_prediction_features import ACBL_DECLARER_WEIGHT, joint_contract_and_declarer
+        contracts, directions = joint_contract_and_declarer(
+            *class_probabilities['Contract'], *class_probabilities['Declarer_Direction'],
+            declarer_weight=ACBL_DECLARER_WEIGHT,
+        )
+        df = df.with_columns([
+            pl.Series('Contract_Pred', contracts, dtype=pl.String),
+            pl.Series('Declarer_Direction_Pred', [None if d == 'NULL' else d for d in directions], dtype=pl.String),
+        ])
+    if 'Declarer_Direction_Pred' in df.columns:
+        y_name = 'Declarer_Direction'
+        df = df.with_columns([
+            pl.struct([f'{y_name}_Pred', 'Player_ID_N', 'Player_ID_E', 'Player_ID_S', 'Player_ID_W'])
+              .map_elements(lambda row: row[f'Player_ID_{row[f"{y_name}_Pred"]}'] if row[f"{y_name}_Pred"] in ('N', 'E', 'S', 'W') else None, return_dtype=pl.String)
+              .alias('Declarer_ID_Pred'),
+            pl.struct([f'{y_name}_Pred', 'Player_Name_N', 'Player_Name_E', 'Player_Name_S', 'Player_Name_W'])
+              .map_elements(lambda row: row[f'Player_Name_{row[f"{y_name}_Pred"]}'] if row[f"{y_name}_Pred"] in ('N', 'E', 'S', 'W') else None, return_dtype=pl.String)
+              .alias('Declarer_Name_Pred'),
+        ])
 
     return df
 
