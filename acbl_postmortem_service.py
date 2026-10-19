@@ -1,12 +1,23 @@
 """Headless ACBL postmortem analysis backed only by the unified Results API."""
 
+import pathlib
 import re
+import threading
+from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple
 
 import duckdb
 import polars as pl
 
 import acbl_club_api_client as club_api
+
+SAVED_MODELS_PATH = pathlib.Path(__file__).resolve().parent / "SavedModels"
+# Columns added by acbl_session_predictions; a query naming one needs them.
+_PREDICTION_COLUMN_RE = re.compile(r"_Pred\b|_Pred_|_Actual\b|\bElo_", re.IGNORECASE)
+_ISO_DATE_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
+_PREDICTED_FRAMES: "OrderedDict[Tuple[str, int, Optional[float]], pl.DataFrame]" = OrderedDict()
+_PREDICTED_FRAMES_MAX = 8
+_PREDICTION_LOCK = threading.Lock()
 
 CON_REGISTER_NAME = "self"
 DEFAULT_SQL_ROW_LIMIT = 500
@@ -79,11 +90,12 @@ def list_available_postmortems(player_id: Optional[str] = None) -> List[Dict[str
             "details_url": details_url,
         }
 
+    # Club descriptions read "session_id, YYYY-MM-DD, club, ...".
     def sort_key(row: Dict[str, Any]) -> str:
         if row.get("date"):
-            return str(row["date"])
-        description = str(row.get("description") or "")
-        return description.split(",", 1)[0].strip()
+            return str(row["date"])[:10]
+        match = _ISO_DATE_RE.search(str(row.get("description") or ""))
+        return match.group(0) if match else ""
 
     return sorted(by_session.values(), key=sort_key, reverse=True)
 
@@ -168,8 +180,45 @@ def personalize(df: pl.DataFrame, player_id: str) -> Tuple[pl.DataFrame, Dict[st
     raise ValueError(f"Player {pid} not found in any Player_ID_[NESW] column of the cached postmortem.")
 
 
-def load_postmortem(player_id: str, session_id: Optional[str] = None) -> Tuple[pl.DataFrame, Dict[str, Any]]:
-    """Load a postmortem exclusively through the unified ACBL API."""
+def needs_predictions(sql: str) -> bool:
+    return _PREDICTION_COLUMN_RE.search(sql) is not None
+
+
+def session_kind(session_id: str) -> str:
+    """Same rule as the unified API: club session ids are all digits."""
+    return "club" if str(session_id).isdigit() else "tournament"
+
+
+def _with_predictions(df: pl.DataFrame, session_id: str) -> pl.DataFrame:
+    import acbl_session_predictions as predictions
+
+    # Live sessions change as results arrive, so the key includes the scores.
+    key = (
+        str(session_id),
+        df.height,
+        df.select(pl.col("Pct_NS").cast(pl.Float64).sum()).item() if "Pct_NS" in df.columns else None,
+    )
+    with _PREDICTION_LOCK:
+        cached = _PREDICTED_FRAMES.get(key)
+        if cached is None:
+            cached = predictions.predict_game_results(df, session_kind(session_id), SAVED_MODELS_PATH)
+            _PREDICTED_FRAMES[key] = cached
+            while len(_PREDICTED_FRAMES) > _PREDICTED_FRAMES_MAX:
+                _PREDICTED_FRAMES.popitem(last=False)
+        else:
+            _PREDICTED_FRAMES.move_to_end(key)
+    return cached
+
+
+def load_postmortem(
+    player_id: str,
+    session_id: Optional[str] = None,
+    predictions: bool = False,
+) -> Tuple[pl.DataFrame, Dict[str, Any]]:
+    """Load a postmortem exclusively through the unified ACBL API.
+
+    predictions adds the Elo, *_Pred, *_Actual, and *_Pred_Error columns.
+    """
     if session_id is None:
         sessions = list_available_postmortems(str(player_id))
         if not sessions:
@@ -181,6 +230,8 @@ def load_postmortem(player_id: str, session_id: Optional[str] = None) -> Tuple[p
     if df is None:
         raise FileNotFoundError(
             f"Postmortem data is unavailable for session {session_id}")
+    if predictions:
+        df = _with_predictions(df, str(session_id))
     df, meta = personalize(df, str(player_id))
     meta["session_id"] = str(session_id)
     meta["source"] = source or "unified ACBL API"

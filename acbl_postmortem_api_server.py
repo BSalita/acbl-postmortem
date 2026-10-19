@@ -6,6 +6,7 @@ import os
 from datetime import datetime, timezone
 from typing import Optional
 
+import duckdb
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel
 
@@ -25,7 +26,7 @@ class SqlRequest(BaseModel):
 def _run(callable_, /, *args, **kwargs):
     try:
         return callable_(*args, **kwargs)
-    except (FileNotFoundError, KeyError, ValueError) as exc:
+    except (FileNotFoundError, KeyError, ValueError, duckdb.Error) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
@@ -76,6 +77,7 @@ def sql(request: SqlRequest) -> dict:
         service.load_postmortem,
         request.player_id,
         request.session_id,
+        predictions=service.needs_predictions(request.sql),
     )
     result = _run(service.run_sql, frame, request.sql, meta, limit=request.limit)
     result["meta"] = meta
