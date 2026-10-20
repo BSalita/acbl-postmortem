@@ -68,5 +68,21 @@ class SqlErrorTests(unittest.TestCase):
         self.assertTrue(load.call_args.kwargs["predictions"])
 
 
+class RawResultColumnTests(unittest.TestCase):
+    def test_result_is_integer_in_sql_when_parquet_has_raw_strings(self) -> None:
+        frame = pl.DataFrame(
+            {
+                "Result": pl.Series([0, 1, -1], dtype=pl.Int8),
+                "result": ["=", "+1", "-1"],
+                "Tricks": pl.Series([9, 10, 8], dtype=pl.Int16),
+                "tricks_taken": ["9", "10", "8"],
+            }
+        )
+        merged = service.club_api._merge_raw_result_columns(frame)
+        self.assertEqual(merged.columns, ["Result", "Tricks"])
+        result = service.run_sql(merged, "SELECT Result FROM self", {})
+        self.assertEqual([row["Result"] for row in result["rows"]], [0, 1, -1])
+
+
 if __name__ == "__main__":
     unittest.main()

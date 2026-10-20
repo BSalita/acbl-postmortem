@@ -312,4 +312,27 @@ def session_augmented_dataframe(
         raise ClubApiClientError(
             f"Invalid postmortem parquet returned for session {session_id}: {exc}"
         ) from exc
-    return frame, resp.headers.get("X-ACBL-Data-Source")
+    return _merge_raw_result_columns(frame), resp.headers.get("X-ACBL-Data-Source")
+
+
+_RAW_RESULT_COLUMNS = {"result": "Result", "tricks_taken": "Tricks"}
+
+
+def _merge_raw_result_columns(frame: pl.DataFrame) -> pl.DataFrame:
+    """Fold ACBL's raw 'result'/'tricks_taken' strings into Result/Tricks and drop them.
+
+    Older augmented parquets still carry the raw strings. DuckDB is
+    case-insensitive, so SQL selecting Result would bind to the 'result' string.
+    """
+    pairs = [
+        (raw, typed) for raw, typed in _RAW_RESULT_COLUMNS.items()
+        if raw in frame.columns and typed in frame.columns
+    ]
+    if not pairs:
+        return frame
+    return frame.with_columns(
+        pl.coalesce(
+            pl.col(raw).cast(frame.schema[typed], strict=False), pl.col(typed)
+        ).alias(typed)
+        for raw, typed in pairs
+    ).drop(raw for raw, _ in pairs)
