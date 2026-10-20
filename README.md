@@ -9,6 +9,16 @@ GitHub: https://github.com/BSalita/acbl-postmortem
 
 For a list of related projects and documents see: https://github.com/BSalita/BridgeStats-ACBL
 
+## Known prediction limitation: too many games
+
+The contract prediction is pulled toward game. On the held-out test set it
+predicts game 25% more often than games are played (club) and 21% more often
+(tournament), calls 30% of part-scores a game, and calls 69% of slams a game.
+The average level is about right; the errors cancel. The model picks the
+single most likely contract, and game probability sits in a few contracts
+(3NT, 4H, 4S) while part-score probability is spread over many. Details and
+the planned fix are in `acbl-pipeline/RESULTS.md` (2026-10-20 entry).
+
 ## Shareable URLs
 
 The sidebar options are mirrored into the URL query string so any view is
