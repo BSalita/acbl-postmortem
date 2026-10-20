@@ -20,6 +20,7 @@ _PREDICTED_FRAMES_MAX = 8
 _PREDICTION_LOCK = threading.Lock()
 
 CON_REGISTER_NAME = "self"
+DUCKDB_THREADS = 8
 DEFAULT_SQL_ROW_LIMIT = 500
 MAX_SQL_ROW_LIMIT = 2000
 MAX_SCHEMA_COLUMNS = 1000
@@ -261,7 +262,9 @@ def run_sql(df: pl.DataFrame, sql: str, meta: Dict[str, Any], limit: Optional[in
     if f"from {CON_REGISTER_NAME}" not in sql.lower():
         sql = f"FROM {CON_REGISTER_NAME} " + sql
     # external access off: only the registered dataframe is queryable.
-    con = duckdb.connect(config={"enable_external_access": "false"})
+    con = duckdb.connect(
+        config={"enable_external_access": "false", "threads": DUCKDB_THREADS}
+    )
     try:
         con.register(CON_REGISTER_NAME, df)
         result = con.execute(sql).pl()
