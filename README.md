@@ -17,8 +17,10 @@ probability is spread over many, so club games were predicted 54% of the time
 against 44% played. The contract is now chosen in two steps: the pass-out,
 part-score, game, or slam bucket with the most total probability, then the
 best contract inside it. That brings predicted games to 44%, at a cost of
-about 0.6 points of exact-contract accuracy. Details are in
-`acbl-pipeline/RESULTS.md` (2026-10-20 entry).
+about 0.6 points of exact-contract accuracy. The selection id is
+`bucket_then_contract` (ACBL declarer weight 0.3). It is not part of the
+checkpoint, so predictions can change while a model file's timestamp stays
+the same. Details are in `acbl-pipeline/RESULTS.md` (2026-10-20 entry).
 
 ## Shareable URLs
 
