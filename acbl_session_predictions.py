@@ -29,6 +29,7 @@ if str(_MLBRIDGE_PATH.parent) not in sys.path:
 from mlBridge import mlBridgeAiLib  # noqa: E402
 from mlBridge.ffbridge_prediction_features import (  # noqa: E402
     ACBL_DECLARER_WEIGHT,
+    attach_room_counts,
     joint_contract_and_declarer,
 )
 
@@ -175,7 +176,11 @@ def predict_game_results(
     club_or_tournament: str,
     saved_models_path: pathlib.Path,
 ) -> pl.DataFrame:
-    """Add Elo, *_Pred, *_Actual, and *_Pred_Error columns to one session frame."""
+    """Add Elo, *_Pred, *_Actual, and *_Pred_Error columns to one session frame.
+
+    Board_Tables, Contract_Pred_Tables, and Declarer_Direction_Pred_Tables
+    count the tables on the deal that played the predicted contract and seat.
+    """
     if club_or_tournament not in ("club", "tournament"):
         raise ValueError(f"club_or_tournament must be club or tournament, not {club_or_tournament!r}")
     saved_models_path = pathlib.Path(saved_models_path)
@@ -250,6 +255,8 @@ def predict_game_results(
         pl.Series("Contract_Pred", contracts, dtype=pl.String),
         pl.Series("Declarer_Direction_Pred", [None if d == "NULL" else d for d in directions], dtype=pl.String),
     ])
+    # One frame can hold games that reuse a board number for different deals.
+    df = attach_room_counts(df, ("Board", "PBN"))
     pred = pl.col("Declarer_Direction_Pred")
     df = df.with_columns([
         pl.coalesce([pl.when(pred == seat).then(pl.col(f"Player_ID_{seat}").cast(pl.String)) for seat in "NESW"])

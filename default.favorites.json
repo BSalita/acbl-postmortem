@@ -761,7 +761,7 @@
 			},
 			"Board_Results_Predictions": {
 				"title": "Board Results Predictions",
-				"help": "**Predicted board results percentages (NS, EW). Predictions made before game starts.**",
+				"help": "**Predicted board results percentages (NS, EW). Board_Tables is the tables that played the board; Contract_Pred_Tables and Declarer_Direction_Pred_Tables are how many of them played the predicted contract and declared from the predicted seat, so 8 of 13 means the room mostly agreed with the model. Predictions made before game starts.**",
 				"prompts": [
 					{
 						"prompt": "",
@@ -769,7 +769,7 @@
 							{"Board Results Predictions for Boards We Played": "@Board_Results_Predictions_Boards_We_Played"},
 							{"Contract Predictions Statistics Per Table": "@Contract_Predictions_Statistics_By_Board"}
 						],
-						"sql": "SELECT CONCAT(section_name, Pair_Number_NS, ' - ', Player_Name_N, ' - ', Player_Name_S) AS Pair_NS, Board, Contract, Score_NS, Pct_NS_Actual, Pct_NS_Pred, Pct_NS_Pred_Error, Declarer_Direction_Pred, Pair_Number_NS, Pair_Number_EW FROM self ORDER BY Board, Pair_NS"
+						"sql": "SELECT CONCAT(section_name, Pair_Number_NS, ' - ', Player_Name_N, ' - ', Player_Name_S) AS Pair_NS, Board, Board_Tables, Contract, Contract_Pred, Contract_Pred_Tables, Declarer_Direction_Pred, Declarer_Direction_Pred_Tables, Score_NS, Pct_NS_Actual, Pct_NS_Pred, Pct_NS_Pred_Error, Pair_Number_NS, Pair_Number_EW FROM self ORDER BY Board, Pair_NS"
 					},
 					{
 						"prompt": "",
@@ -777,14 +777,14 @@
 							{"Board Results Predictions for Boards We Played": "@Board_Results_Predictions_Boards_We_Played"},
 							{"Contract Predictions Statistics Per Table": "@Contract_Predictions_Statistics_By_Board"}
 						],
-						"sql": "SELECT CONCAT(section_name, Pair_Number_EW, ' - ', Player_Name_E, ' - ', Player_Name_W) AS Pair_EW, Board, Contract, Score_EW, Pct_EW_Actual, Pct_EW_Pred, Pct_EW_Pred_Error, Declarer_Direction_Pred, Pair_Number_NS, Pair_Number_EW FROM self ORDER BY Board, Pair_EW"
+						"sql": "SELECT CONCAT(section_name, Pair_Number_EW, ' - ', Player_Name_E, ' - ', Player_Name_W) AS Pair_EW, Board, Board_Tables, Contract, Contract_Pred, Contract_Pred_Tables, Declarer_Direction_Pred, Declarer_Direction_Pred_Tables, Score_EW, Pct_EW_Actual, Pct_EW_Pred, Pct_EW_Pred_Error, Pair_Number_NS, Pair_Number_EW FROM self ORDER BY Board, Pair_EW"
 					}
 				]
 			},
 			"Board_Results_Predictions_Boards_We_Played": {
 				"title": "Board Results Predictions for Boards We Played",
 				"row_click": "Show every score on board {Board}.",
-				"help": "**Predicted board results percentages. Only boards our partnership played. Predictions made before game starts.**",
+				"help": "**Predicted board results percentages. Only boards our partnership played. Board_Tables is the tables that played the board; Contract_Pred_Tables and Declarer_Direction_Pred_Tables are how many of them played the predicted contract and declared from the predicted seat. Predictions made before game starts.**",
 				"prompts": [
 					{
 						"prompt": "",
@@ -793,7 +793,7 @@
 							{"Boards Your Partnership Played": "@Boards_We_Played"},
 							{"Every score": "Show every score on board {Board}."}
 						],
-						"sql": "SELECT Board, Contract, Score, Declarer_Pct, Declarer_Pct_Pred, Declarer_Direction_Pred, Pair_Number_{Opponent_Pair_Direction}, boards_we_played FROM self WHERE boards_we_played=TRUE ORDER BY Board"
+						"sql": "SELECT Board, Board_Tables, Contract, Contract_Pred, Contract_Pred_Tables, Score, Declarer_Pct, Declarer_Pct_Pred, Declarer_Direction_Pred, Declarer_Direction_Pred_Tables, Pair_Number_{Opponent_Pair_Direction}, boards_we_played FROM self WHERE boards_we_played=TRUE ORDER BY Board"
 					}
 				]
 			},
@@ -865,7 +865,7 @@
 							{"Contract Predictions Statistics Per Table": "@Contract_Predictions_Statistics_By_Board"},
 							{"Contract Predictions Statistics Per Grouped Contract": "@Contract_Predictions_Statistics_By_Board_By_Contract"}
 						],
-						"sql": "SELECT Board, CASE WHEN '{Opponent_Pair_Direction}'='NS' THEN CONCAT(section_name, Pair_Number_NS, ' - ', Player_Name_N, ' - ', Player_Name_S) ELSE CONCAT(section_name, Pair_Number_EW, ' - ', Player_Name_E, ' - ', Player_Name_W) END AS Opponents, Contract, Contract_Pred FROM self WHERE Boards_We_Played = True ORDER BY Board, CONCAT(section_name, Pair_Number_NS)"
+						"sql": "SELECT Board, CASE WHEN '{Opponent_Pair_Direction}'='NS' THEN CONCAT(section_name, Pair_Number_NS, ' - ', Player_Name_N, ' - ', Player_Name_S) ELSE CONCAT(section_name, Pair_Number_EW, ' - ', Player_Name_E, ' - ', Player_Name_W) END AS Opponents, Board_Tables, Contract, Contract_Pred, Contract_Pred_Tables FROM self WHERE Boards_We_Played = True ORDER BY Board, CONCAT(section_name, Pair_Number_NS)"
 					}
 				]
 			},
@@ -879,7 +879,7 @@
 							{"Contract Predictions Statistics Per Grouped Contract": "@Contract_Predictions_Statistics_By_Board_By_Contract"},
 							{"Boards Your Partnership Played": "@Boards_We_Played"}
 						],
-						"sql": "SELECT Board, CONCAT(section_name, Pair_Number_NS, ' - ', Player_Name_N, ' vs ', section_name, Pair_Number_EW, ' - ', Player_Name_E) AS NS_vs_EW, Contract, Contract_Pred FROM self ORDER BY Board, CONCAT(section_name, Pair_Number_NS)"
+						"sql": "SELECT Board, CONCAT(section_name, Pair_Number_NS, ' - ', Player_Name_N, ' vs ', section_name, Pair_Number_EW, ' - ', Player_Name_E) AS NS_vs_EW, Board_Tables, Contract, Contract_Pred, Contract_Pred_Tables FROM self ORDER BY Board, CONCAT(section_name, Pair_Number_NS)"
 					}
 				]
 			},
