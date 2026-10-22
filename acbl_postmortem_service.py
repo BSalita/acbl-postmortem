@@ -290,12 +290,24 @@ def _prepare_sql(sql: str, meta: Dict[str, Any]) -> str:
     return sql
 
 
-def _connect(df: pl.DataFrame) -> duckdb.DuckDBPyConnection:
+def _connect(df: pl.DataFrame, materialize: bool = False) -> duckdb.DuckDBPyConnection:
+    """Connection with the frame as 'self'.
+
+    materialize copies it into a native DuckDB table. A session frame has
+    ~6,800 columns, and a query on the registered Polars frame costs ~0.13 s
+    against ~0.02 s on the table; the copy costs ~0.3 s, so it pays off from
+    a few statements on (37-statement report: 4.8 s -> 0.9 s).
+    """
     # external access off: only the registered dataframe is queryable.
     con = duckdb.connect(
         config={"enable_external_access": "false", "threads": DUCKDB_THREADS}
     )
-    con.register(CON_REGISTER_NAME, df)
+    if materialize:
+        con.register("_frame", df)
+        con.execute(f"CREATE TABLE {CON_REGISTER_NAME} AS SELECT * FROM _frame")
+        con.unregister("_frame")
+    else:
+        con.register(CON_REGISTER_NAME, df)
     return con
 
 
@@ -337,7 +349,7 @@ def run_sql_batch(
     """
     limit = max(1, min(limit or DEFAULT_SQL_ROW_LIMIT, MAX_SQL_ROW_LIMIT))
     results: List[Dict[str, Any]] = []
-    con = _connect(df)
+    con = _connect(df, materialize=len(statements) > 3)
     try:
         for raw in statements:
             started = time.perf_counter()
