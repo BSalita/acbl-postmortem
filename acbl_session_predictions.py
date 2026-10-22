@@ -82,6 +82,19 @@ def _elo_file(saved_models_path: pathlib.Path, name: str) -> Tuple[str, float]:
     return str(path), path.stat().st_mtime
 
 
+def warm_elo_tables(saved_models_path: pathlib.Path) -> None:
+    """Load the club and tournament rating tables into the lru caches.
+
+    Loading and sorting them takes ~5 s; the API calls this in a background
+    thread at startup so the first prediction after a restart does not.
+    """
+    for kind in ("club", "tournament"):
+        for name, loader in (("player", _player_elo), ("pair", _pair_elo)):
+            path = pathlib.Path(saved_models_path) / f"acbl_{kind}_{name}_elo_ratings.parquet"
+            if path.is_file():
+                loader(*_elo_file(pathlib.Path(saved_models_path), path.name))
+
+
 def _join_elo(df: pl.DataFrame, club_or_tournament: str, saved_models_path: pathlib.Path) -> pl.DataFrame:
     if df.select(pl.col("^Elo_.*$")).width:
         raise ValueError(f"Session frame already has Elo columns: {df.select(pl.col('^Elo_.*$')).columns}")
@@ -91,6 +104,14 @@ def _join_elo(df: pl.DataFrame, club_or_tournament: str, saved_models_path: path
     df = df.with_columns(
         [_player_id_key(f"Player_ID_{direction}").alias(f"Player_ID_{direction}") for direction in "NESW"]
     )
+    # The rating tables hold millions of rows; join only this session's
+    # players and pairs (filter keeps the Date order join_asof needs).
+    session_players = pl.concat([df[f"Player_ID_{direction}"] for direction in "NESW"]).unique()
+    player_elo = player_elo.filter(pl.col("Player_ID").is_in(session_players.implode()))
+    session_pairs = pl.concat([
+        df[f"Pair_IDs_{pair}"].cast(pl.List(pl.String)).list.sort().list.join("-") for pair in ("NS", "EW")
+    ]).unique()
+    pair_elo = pair_elo.filter(pl.col("Pair_IDs_Sorted_Str").is_in(session_pairs.implode()))
     # join_asof takes the latest rating on or before the game date.
     for direction in "NESW":
         # Augmented frames already carry MasterPoints_*; joining the same name
@@ -158,15 +179,19 @@ def _model_input(df: pl.DataFrame, schema: Dict) -> pl.DataFrame:
     feature_dtypes = schema.get("feature_dtypes", {})
     required = schema.get("numerical_feature_cols", []) + schema.get("categorical_feature_cols", [])
     # Features the session frame lacks are all-null, as at training time.
-    missing = [col for col in required if col not in df.columns]
+    # One schema lookup: df.columns and df[col] rebuild per call, and the
+    # classifiers have thousands of features on a ~6,800-column frame.
+    present = df.schema
+    missing = [col for col in required if col not in present]
     if missing:
         df = df.with_columns([
             pl.lit(None).cast(to_pl_dtype(str(feature_dtypes[col]))).alias(col) for col in missing
         ])
+    dtypes = df.schema
     casts = []
     for col in required:
         expected = to_pl_dtype(str(feature_dtypes[col]))
-        if df[col].dtype != expected:
+        if dtypes[col] != expected:
             casts.append(pl.col(col).cast(expected, strict=False).alias(col))
     return df.with_columns(casts) if casts else df
 

@@ -124,6 +124,17 @@ def schema(
 if __name__ == "__main__":
     import uvicorn
 
+    import threading
+
+    import acbl_session_predictions
+
+    # Rating tables take ~5 s to load; warm them while the server starts.
+    threading.Thread(
+        target=acbl_session_predictions.warm_elo_tables,
+        args=(service.SAVED_MODELS_PATH,),
+        name="warm-elo-tables",
+        daemon=True,
+    ).start()
     port = int(os.environ.get("ACBL_POSTMORTEM_API_PORT", "8522"))
     print(
         f"[acbl-postmortem-api] start "
