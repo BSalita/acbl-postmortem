@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
-from typing import Optional
+from typing import List, Optional
 
 import duckdb
 from fastapi import FastAPI, HTTPException, Query
@@ -82,6 +82,32 @@ def sql(request: SqlRequest) -> dict:
     result = _run(service.run_sql, frame, request.sql, meta, limit=request.limit)
     result["meta"] = meta
     return result
+
+
+class SqlBatchRequest(BaseModel):
+    player_id: str
+    statements: List[str]
+    session_id: Optional[str] = None
+    limit: int = 500
+
+
+@app.post("/acbl-postmortem/sql-batch")
+def sql_batch(request: SqlBatchRequest) -> dict:
+    """Run several statements on one loaded session, in order.
+
+    results[i] answers statements[i]. A failing statement carries "error"
+    in its slot and the rest still run. Used by the MCP report jobs.
+    """
+    if not request.statements:
+        raise HTTPException(status_code=422, detail="statements is empty")
+    frame, meta = _run(
+        service.load_postmortem,
+        request.player_id,
+        request.session_id,
+        predictions=any(service.needs_predictions(sql) for sql in request.statements),
+    )
+    results = _run(service.run_sql_batch, frame, request.statements, meta, limit=request.limit)
+    return {"results": results, "meta": meta}
 
 
 @app.get("/acbl-postmortem/schema")

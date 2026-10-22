@@ -18,12 +18,85 @@ def _club_games(*rows: tuple[str, str]) -> dict:
 
 
 class LatestSessionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        service._SESSION_LISTS.clear()
+
     def test_latest_club_session_is_ordered_by_game_date_not_session_id(self) -> None:
         games = _club_games(("99620", "2020-02-16"), ("993420", "2024-04-13"), ("985305", "2024-03-28"))
         with mock.patch.object(service.club_api, "player_club_games", return_value=games), \
                 mock.patch.object(service.club_api, "player_tournament_sessions", return_value={}):
             sessions = service.list_available_postmortems("2663279")
         self.assertEqual([row["session_id"] for row in sessions], ["993420", "985305", "99620"])
+
+
+class SessionListCacheTests(unittest.TestCase):
+    def setUp(self) -> None:
+        service._SESSION_LISTS.clear()
+
+    def test_second_lookup_within_ttl_reuses_the_list(self) -> None:
+        games = _club_games(("993420", "2024-04-13"))
+        with mock.patch.object(service.club_api, "player_club_games", return_value=games) as club,                 mock.patch.object(service.club_api, "player_tournament_sessions", return_value={}):
+            first = service.list_available_postmortems("2663279")
+            first[0]["session_id"] = "mutated"
+            second = service.list_available_postmortems("2663279")
+        self.assertEqual(club.call_count, 1)
+        self.assertEqual(second[0]["session_id"], "993420")
+
+    def test_expired_entry_is_fetched_again(self) -> None:
+        games = _club_games(("993420", "2024-04-13"))
+        with mock.patch.object(service.club_api, "player_club_games", return_value=games) as club,                 mock.patch.object(service.club_api, "player_tournament_sessions", return_value={}):
+            service.list_available_postmortems("2663279")
+            stamp, rows = service._SESSION_LISTS["2663279"]
+            service._SESSION_LISTS["2663279"] = (stamp - service.SESSION_LIST_TTL_S - 1, rows)
+            service.list_available_postmortems("2663279")
+        self.assertEqual(club.call_count, 2)
+
+    def test_list_built_after_an_api_error_is_not_cached(self) -> None:
+        games = _club_games(("993420", "2024-04-13"))
+        with mock.patch.object(service.club_api, "player_club_games", return_value=games),                 mock.patch.object(
+                    service.club_api,
+                    "player_tournament_sessions",
+                    side_effect=service.club_api.ClubApiClientError("down"),
+                ):
+            service.list_available_postmortems("2663279")
+        self.assertNotIn("2663279", service._SESSION_LISTS)
+
+
+class SqlBatchTests(unittest.TestCase):
+    def test_batch_keeps_order_and_isolates_a_failing_statement(self) -> None:
+        frame = pl.DataFrame({"Board": [1, 2, 3]})
+        results = service.run_sql_batch(
+            frame,
+            ["SELECT COUNT(*) AS n FROM self", "SELECT Missing_Column FROM self", "SELECT MAX(Board) AS m"],
+            {},
+        )
+        self.assertEqual(results[0]["rows"], [{"n": 3}])
+        self.assertIn("Missing_Column", results[1]["error"])
+        self.assertEqual(results[2]["rows"], [{"m": 3}])
+        self.assertTrue(all("elapsed_s" in row for row in results))
+
+    def test_endpoint_loads_once_with_predictions_when_any_statement_needs_them(self) -> None:
+        frame = pl.DataFrame({"Board": [1], "Pct_NS_Pred": [0.5]})
+        with mock.patch.object(service, "load_postmortem", return_value=(frame, {})) as load:
+            response = TestClient(api.app).post(
+                "/acbl-postmortem/sql-batch",
+                json={
+                    "player_id": "2663279",
+                    "session_id": "993420",
+                    "statements": ["SELECT Board FROM self", "SELECT AVG(Pct_NS_Pred) AS p FROM self"],
+                },
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(load.call_count, 1)
+        self.assertTrue(load.call_args.kwargs["predictions"])
+        self.assertEqual(len(response.json()["results"]), 2)
+
+    def test_empty_batch_is_rejected(self) -> None:
+        response = TestClient(api.app).post(
+            "/acbl-postmortem/sql-batch",
+            json={"player_id": "2663279", "statements": []},
+        )
+        self.assertEqual(response.status_code, 422)
 
 
 class PredictionColumnTests(unittest.TestCase):

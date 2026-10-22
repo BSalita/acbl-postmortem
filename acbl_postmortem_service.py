@@ -3,6 +3,7 @@
 import pathlib
 import re
 import threading
+import time
 from collections import OrderedDict
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -18,6 +19,12 @@ _ISO_DATE_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
 _PREDICTED_FRAMES: "OrderedDict[Tuple[str, int, Optional[float]], pl.DataFrame]" = OrderedDict()
 _PREDICTED_FRAMES_MAX = 8
 _PREDICTION_LOCK = threading.Lock()
+# A player's session list takes ~7 s (full club and tournament history from
+# the unified API). Reports and the latest-session lookup reuse it for 10
+# minutes; a game played in that window shows up when the entry expires.
+SESSION_LIST_TTL_S = 10 * 60
+_SESSION_LISTS: Dict[str, Tuple[float, List[Dict[str, Any]]]] = {}
+_SESSION_LIST_LOCK = threading.Lock()
 
 CON_REGISTER_NAME = "self"
 DUCKDB_THREADS = 8
@@ -52,15 +59,35 @@ BOARD_SUMMARY_COLUMNS = [
 
 
 def list_available_postmortems(player_id: Optional[str] = None) -> List[Dict[str, Any]]:
-    """Club and tournament sessions listed by the unified ACBL API."""
+    """Club and tournament sessions listed by the unified ACBL API.
+
+    Cached per player for SESSION_LIST_TTL_S. A list built while either
+    source failed is returned but not cached.
+    """
     if player_id is None:
         return []
+    key = str(player_id)
+    now = time.monotonic()
+    with _SESSION_LIST_LOCK:
+        hit = _SESSION_LISTS.get(key)
+        if hit is not None and now - hit[0] < SESSION_LIST_TTL_S:
+            return [dict(row) for row in hit[1]]
+    rows, complete = _fetch_available_postmortems(key)
+    if complete:
+        with _SESSION_LIST_LOCK:
+            _SESSION_LISTS[key] = (now, rows)
+    return [dict(row) for row in rows]
+
+
+def _fetch_available_postmortems(player_id: str) -> Tuple[List[Dict[str, Any]], bool]:
+    complete = True
     by_session: Dict[str, Dict[str, Any]] = {}
     try:
         club_games = club_api.player_club_games(
             str(player_id), limit=2000, prefer_fresh=True)
     except club_api.ClubApiClientError:
         club_games = {}
+        complete = False
     for session_id, (_source_url, details_url, description) in (
         club_games or {}
     ).items():
@@ -78,6 +105,7 @@ def list_available_postmortems(player_id: Optional[str] = None) -> List[Dict[str
             str(player_id), limit=2000, prefer_fresh=True)
     except club_api.ClubApiClientError:
         tournament_sessions = {}
+        complete = False
     for sid, (_source_url, details_url, description, row) in (
         tournament_sessions or {}
     ).items():
@@ -98,7 +126,7 @@ def list_available_postmortems(player_id: Optional[str] = None) -> List[Dict[str
         match = _ISO_DATE_RE.search(str(row.get("description") or ""))
         return match.group(0) if match else ""
 
-    return sorted(by_session.values(), key=sort_key, reverse=True)
+    return sorted(by_session.values(), key=sort_key, reverse=True), complete
 
 
 def dataset_info() -> Dict[str, Any]:
@@ -253,23 +281,26 @@ def process_sql_macros(sql: str, meta: Dict[str, Any]) -> str:
     return sql
 
 
-def run_sql(df: pl.DataFrame, sql: str, meta: Dict[str, Any], limit: Optional[int] = None) -> Dict[str, Any]:
-    """Run DuckDB SQL against the postmortem dataframe registered as 'self'."""
-    limit = max(1, min(limit or DEFAULT_SQL_ROW_LIMIT, MAX_SQL_ROW_LIMIT))
+def _prepare_sql(sql: str, meta: Dict[str, Any]) -> str:
     sql = process_sql_macros(sql.strip().rstrip(";"), meta)
     # Same convenience as the app's ShowDataFrameTable: allow DuckDB's
     # FROM-first syntax by prepending the table when it is not referenced.
     if f"from {CON_REGISTER_NAME}" not in sql.lower():
         sql = f"FROM {CON_REGISTER_NAME} " + sql
+    return sql
+
+
+def _connect(df: pl.DataFrame) -> duckdb.DuckDBPyConnection:
     # external access off: only the registered dataframe is queryable.
     con = duckdb.connect(
         config={"enable_external_access": "false", "threads": DUCKDB_THREADS}
     )
-    try:
-        con.register(CON_REGISTER_NAME, df)
-        result = con.sql(sql).pl()
-    finally:
-        con.close()
+    con.register(CON_REGISTER_NAME, df)
+    return con
+
+
+def _sql_payload(con: duckdb.DuckDBPyConnection, sql: str, limit: int) -> Dict[str, Any]:
+    result = con.sql(sql).pl()
     truncated = result.height > limit
     result = result.head(limit)
     return {
@@ -279,6 +310,47 @@ def run_sql(df: pl.DataFrame, sql: str, meta: Dict[str, Any], limit: Optional[in
         "row_count": result.height,
         "truncated": truncated,
     }
+
+
+def run_sql(df: pl.DataFrame, sql: str, meta: Dict[str, Any], limit: Optional[int] = None) -> Dict[str, Any]:
+    """Run DuckDB SQL against the postmortem dataframe registered as 'self'."""
+    limit = max(1, min(limit or DEFAULT_SQL_ROW_LIMIT, MAX_SQL_ROW_LIMIT))
+    sql = _prepare_sql(sql, meta)
+    con = _connect(df)
+    try:
+        return _sql_payload(con, sql, limit)
+    finally:
+        con.close()
+
+
+def run_sql_batch(
+    df: pl.DataFrame,
+    statements: List[str],
+    meta: Dict[str, Any],
+    limit: Optional[int] = None,
+) -> List[Dict[str, Any]]:
+    """Run several statements on one connection, in order.
+
+    A failing statement returns {"sql", "error"} in its slot; the rest still
+    run. A report runs ~37 statements on one session, so registering the
+    frame once saves a request and a connection per statement.
+    """
+    limit = max(1, min(limit or DEFAULT_SQL_ROW_LIMIT, MAX_SQL_ROW_LIMIT))
+    results: List[Dict[str, Any]] = []
+    con = _connect(df)
+    try:
+        for raw in statements:
+            started = time.perf_counter()
+            sql = _prepare_sql(raw, meta)
+            try:
+                payload = _sql_payload(con, sql, limit)
+            except duckdb.Error as exc:
+                payload = {"sql": sql, "error": str(exc)}
+            payload["elapsed_s"] = round(time.perf_counter() - started, 3)
+            results.append(payload)
+    finally:
+        con.close()
+    return results
 
 
 def board_results(
