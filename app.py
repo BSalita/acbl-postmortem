@@ -179,7 +179,7 @@ def ShowDataFrameTable(df: Any, key: str, query: Optional[str] = None, show_sql_
     query_engine = st.session_state.get('query_engine', 'DuckDB')
     
     try:
-        result_df = cast_numeric_display_columns(get_db_connection().execute(query).pl())
+        result_df = cast_numeric_display_columns(get_db_connection().sql(query).pl())
         st.text(f"Result is a dataframe of {len(result_df)} rows.")
         if show_sql_query and st.session_state.show_sql_query:
             # Debug: if Pct_NS_Pred exists in result, show stats
