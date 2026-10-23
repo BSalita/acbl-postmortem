@@ -155,7 +155,7 @@ import acbl_club_api_client as club_api
 import acbl_session_predictions
 import streamlitlib # must be placed after sys.path.append. vscode re-format likes to move this to the top
 from mlBridge.mlBridgeLib import pd_options_display, contract_classes, cast_numeric_display_columns # must be placed after sys.path.append. vscode re-format likes to move this to the top
-from mlBridge.mlBridgePostmortemLib import PostmortemBase, git_build_stamp
+from mlBridge.mlBridgePostmortemLib import PostmortemBase, git_build_stamp, scroll_to_report_top_once
 from mlBridge.postmortem_section_help import section_help_for_players
 
 # override pandas display options
@@ -2604,6 +2604,7 @@ def write_report() -> None:
                 </a>
             </div>
         ''', unsafe_allow_html=True)
+        scroll_to_report_top_once()
 
     if st.session_state.pdf_link.download_button(label="Download Personalized Report",
             data=streamlitlib.create_pdf(st.session_state.pdf_assets, title=f"Bridge Game Postmortem Report Personalized for {st.session_state.player_id}"),
