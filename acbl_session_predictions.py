@@ -10,6 +10,7 @@ from __future__ import annotations
 import functools
 import json
 import logging
+import os
 import pathlib
 import sys
 from typing import Dict, Tuple
@@ -75,14 +76,30 @@ def _pair_elo(path: str, _mtime: float) -> pl.DataFrame:
     )
 
 
-def _elo_file(saved_models_path: pathlib.Path, name: str) -> Tuple[str, float]:
-    path = saved_models_path / name
+ELO_DIR_ENV = "ACBL_ELO_DIR"
+
+
+def elo_dir() -> pathlib.Path:
+    """Folder with the current acbl_*_player/pair_elo_ratings.parquet files.
+
+    The same files the ACBL Elo API reads (in prod, /data). Kept apart from
+    SavedModels, which holds only the prediction models, so predictions
+    always use the latest Elo build instead of a stale copy.
+    """
+    value = os.getenv(ELO_DIR_ENV, "").strip()
+    if not value:
+        raise RuntimeError(f"{ELO_DIR_ENV} is not set; point it at the folder with the ACBL Elo rating parquets")
+    return pathlib.Path(value)
+
+
+def _elo_file(name: str) -> Tuple[str, float]:
+    path = elo_dir() / name
     if not path.is_file():
         raise FileNotFoundError(f"ACBL Elo ratings not found: {path}")
     return str(path), path.stat().st_mtime
 
 
-def warm_elo_tables(saved_models_path: pathlib.Path) -> None:
+def warm_elo_tables() -> None:
     """Load the club and tournament rating tables into the lru caches.
 
     Loading and sorting them takes ~5 s; the API calls this in a background
@@ -90,16 +107,16 @@ def warm_elo_tables(saved_models_path: pathlib.Path) -> None:
     """
     for kind in ("club", "tournament"):
         for name, loader in (("player", _player_elo), ("pair", _pair_elo)):
-            path = pathlib.Path(saved_models_path) / f"acbl_{kind}_{name}_elo_ratings.parquet"
+            path = elo_dir() / f"acbl_{kind}_{name}_elo_ratings.parquet"
             if path.is_file():
-                loader(*_elo_file(pathlib.Path(saved_models_path), path.name))
+                loader(*_elo_file(path.name))
 
 
-def _join_elo(df: pl.DataFrame, club_or_tournament: str, saved_models_path: pathlib.Path) -> pl.DataFrame:
+def _join_elo(df: pl.DataFrame, club_or_tournament: str) -> pl.DataFrame:
     if df.select(pl.col("^Elo_.*$")).width:
         raise ValueError(f"Session frame already has Elo columns: {df.select(pl.col('^Elo_.*$')).columns}")
-    player_elo = _player_elo(*_elo_file(saved_models_path, f"acbl_{club_or_tournament}_player_elo_ratings.parquet"))
-    pair_elo = _pair_elo(*_elo_file(saved_models_path, f"acbl_{club_or_tournament}_pair_elo_ratings.parquet"))
+    player_elo = _player_elo(*_elo_file(f"acbl_{club_or_tournament}_player_elo_ratings.parquet"))
+    pair_elo = _pair_elo(*_elo_file(f"acbl_{club_or_tournament}_pair_elo_ratings.parquet"))
     initial_rows = df.height
     df = df.with_columns(
         [_player_id_key(f"Player_ID_{direction}").alias(f"Player_ID_{direction}") for direction in "NESW"]
@@ -209,7 +226,7 @@ def predict_game_results(
     if club_or_tournament not in ("club", "tournament"):
         raise ValueError(f"club_or_tournament must be club or tournament, not {club_or_tournament!r}")
     saved_models_path = pathlib.Path(saved_models_path)
-    df = _join_elo(df, club_or_tournament, saved_models_path)
+    df = _join_elo(df, club_or_tournament)
 
     # Live API builds omit game_date. Historical frames carry it as Date at
     # midnight, and a null scales to an extreme input rather than a neutral one.

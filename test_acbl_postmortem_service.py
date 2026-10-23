@@ -99,6 +99,21 @@ class SqlBatchTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
 
 
+class EloDirTests(unittest.TestCase):
+    def test_elo_dir_comes_from_env(self) -> None:
+        import acbl_session_predictions as predictions
+
+        with mock.patch.dict("os.environ", {"ACBL_ELO_DIR": "/data"}):
+            self.assertEqual(str(predictions.elo_dir()).replace("\\", "/"), "/data")
+
+    def test_elo_dir_unset_fails_fast(self) -> None:
+        import acbl_session_predictions as predictions
+
+        with mock.patch.dict("os.environ", {"ACBL_ELO_DIR": ""}):
+            with self.assertRaises(RuntimeError):
+                predictions.elo_dir()
+
+
 class PredictionColumnTests(unittest.TestCase):
     def test_prediction_favorites_need_predictions(self) -> None:
         for sql in (
