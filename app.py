@@ -982,6 +982,22 @@ def _activate_player_id(player_id: str, original_input: str) -> None:
     sync_url_params_from_state()
 
 
+def _clear_loaded_player() -> None:
+    """Drop the current player and game so the main window empties.
+
+    Used when a name matches several players: the old report must not stay
+    on screen looking like the result of the new search.
+    """
+    st.session_state.player_id = None
+    st.session_state.session_id = None
+    st.session_state.df = None
+    st.session_state.sql_query_mode = False
+    st.session_state.sql_queries = []
+    for key in ("game_description", "player_name", "partner_name"):
+        if key in st.session_state:
+            st.session_state[key] = None
+
+
 def player_id_change() -> None:
     query = str(st.session_state.player_id_input or "").strip()
     st.session_state.player_name_matches = {}
@@ -1028,11 +1044,13 @@ def player_id_change() -> None:
         _activate_player_id(player_id, query)
         return
     if matches:
+        _clear_loaded_player()
         st.session_state.player_name_matches = {
             str(row["player_number"]): row for row in matches
         }
         st.session_state.player_name_query = query
         st.session_state.player_lookup_message = None
+        sync_url_params_from_state()
         return
 
     st.session_state.player_id_validation_failed = True
