@@ -1947,6 +1947,12 @@ def create_sidebar() -> None:
     st.sidebar.markdown("🔗 [FFBridge Statistics](https://ffbridge-stats.7nt.info)")
     st.sidebar.markdown("🔗 [PBN/LIN Postmortem](https://pbn.postmortem.chat)")
 
+    # Show SQL query - shows the SQL above each SQL-produced grid; synced with ?show_sql_query=
+    st.sidebar.markdown("---")
+    st.sidebar.checkbox(
+        "Show SQL query", value=st.session_state.show_sql_query, on_change=show_sql_query_change, key='sql_query_checkbox',
+        help='Show the SQL query used to produce each table.')
+
     # Developer Settings - Always show regardless of player_id (at very bottom of sidebar)
     with st.sidebar.expander('Developer Settings', False):
         if st.session_state.debug_favorites is not None:
@@ -1985,9 +1991,6 @@ def create_sidebar() -> None:
                     st.sidebar.error("Invalid debug player ID selected")
                     # Clear the validation failure flag after handling
                     st.session_state.debug_player_id_validation_failed = False
-
-        st.checkbox(
-            "Show SQL Queries", value=st.session_state.show_sql_query, on_change=show_sql_query_change, key='sql_query_checkbox')
 
         # Not at all fast to calculate. approximately .25 seconds per unique pbn overhead is minimum + .05 seconds per observation per unique pbn. e.g. time for 24 boards = 24 * (.25 + num of observations * .05).
         st.number_input(
@@ -2673,7 +2676,7 @@ def initialize_session_state() -> None:
     first_time_defaults = {
         'first_time': True,
         'single_dummy_sample_count': 10,
-        'show_sql_query': True, # os.getenv('STREAMLIT_ENV') == 'development',
+        'show_sql_query': False, # "Show SQL query" sidebar checkbox; ?show_sql_query=1 overrides
         'use_historical_data': False,
         'con_register_name': 'self',
         'main_section_container': st.empty(),
@@ -2774,6 +2777,10 @@ class BridgeGamePostmortemChatbot(PostmortemBase):
         """Initialize app-specific session state."""
         # First initialize common session state
         self.initialize_common_session_state()
+
+        # "Show SQL query" sidebar checkbox defaults to unchecked (the base class
+        # default depends on STREAMLIT_ENV); ?show_sql_query=1 overrides below.
+        st.session_state.show_sql_query = False
 
         # Default player_id placeholder; URL value (if any) is applied below.
         if 'player_id' not in st.session_state:
