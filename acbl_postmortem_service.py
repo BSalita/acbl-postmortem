@@ -54,6 +54,7 @@ BOARD_SUMMARY_COLUMNS = [
     "MP_NS", "MP_EW", "MP_Top", "Par_NS", "ParContract",
     "Par_Contract_NS", "Par_Contract_EW", "Is_Sacrifice_Opportunity",
     "DD_Score_NS", "DD_Score_EW", "EV_Score_NS", "EV_Score_EW",
+    "Lead", "DD_Lead_Cost", "Lead_Is_DD_Best",  # club only
     "Pair_Number_NS", "Pair_Number_EW", "PBN",
 ]
 
