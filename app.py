@@ -1664,12 +1664,12 @@ def run_ai_predictions_now() -> None:
     # st.session_state.ai_api = DEFAULT_AI_MODEL
 
 
+ASSISTANT_LOGO_URL = 'https://github.com/BSalita/acbl-postmortem/blob/master/assets/logo_assistant.gif?raw=true' # 🥸 todo: put into config. must have raw=true for github url.
+
+
 def render_sidebar_brand(title: str) -> None:
     """Gif and short title at the top of the sidebar, as in MortyBridgeChatbot."""
-    logo_url = st.session_state.get(
-        "assistant_logo",
-        "https://github.com/BSalita/acbl-postmortem/blob/master/assets/logo_assistant.gif?raw=true",
-    )
+    logo_url = st.session_state.get("assistant_logo", ASSISTANT_LOGO_URL)
     st.sidebar.markdown(
         (
             '<div style="display:flex;align-items:center;gap:0.6rem;margin:0 0 0.75rem 0;">'
@@ -2445,7 +2445,7 @@ def read_configs() -> None:
 
 def initialize_website_specific() -> None:
 
-    st.session_state.assistant_logo = 'https://github.com/BSalita/acbl-postmortem/blob/master/assets/logo_assistant.gif?raw=true' # 🥸 todo: put into config. must have raw=true for github url.
+    st.session_state.assistant_logo = ASSISTANT_LOGO_URL
     st.session_state.guru_logo = 'https://github.com/BSalita/acbl-postmortem/blob/master/assets/logo_guru.png?raw=true' # 🥷todo: put into config file. must have raw=true for github url.
     st.session_state.game_results_url_default = None
     st.session_state.game_name = 'acbl'
@@ -2655,7 +2655,7 @@ def create_ui() -> None:
 
 
 def initialize_session_state() -> None:
-    st.set_page_config(layout="wide", initial_sidebar_state="expanded")
+    st.set_page_config(page_icon=ASSISTANT_LOGO_URL, layout="wide", initial_sidebar_state="expanded")
     # Add this auto-scroll code
     streamlitlib.widen_scrollbars()
 
@@ -2845,7 +2845,7 @@ class BridgeGamePostmortemChatbot(PostmortemBase):
 
 
 def main() -> None:
-    st.set_page_config(layout="wide", initial_sidebar_state="expanded")
+    st.set_page_config(page_icon=ASSISTANT_LOGO_URL, layout="wide", initial_sidebar_state="expanded")
     if 'app' not in st.session_state:
         st.session_state.app = BridgeGamePostmortemChatbot()
     st.session_state.app.main()
