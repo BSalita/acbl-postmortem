@@ -155,7 +155,7 @@ import acbl_club_api_client as club_api
 import acbl_session_predictions
 import streamlitlib # must be placed after sys.path.append. vscode re-format likes to move this to the top
 from mlBridge.mlBridgeLib import pd_options_display, contract_classes, cast_numeric_display_columns # must be placed after sys.path.append. vscode re-format likes to move this to the top
-from mlBridge.mlBridgePostmortemLib import PostmortemBase, git_build_stamp, scroll_to_report_top_once
+from mlBridge.mlBridgePostmortemLib import PostmortemBase, attach_hand_expectations, git_build_stamp, query_reads_own_table, scroll_to_report_top_once
 from mlBridge.postmortem_section_help import section_help_for_players
 
 # override pandas display options
@@ -172,7 +172,8 @@ def ShowDataFrameTable(df: Any, key: str, query: Optional[str] = None, show_sql_
     # if query doesn't contain 'FROM self', add 'FROM self ' to the beginning of the query.
     # can't just check for startswith 'from self'. Not universal because 'from self' can appear in subqueries or after JOIN.
     # this syntax makes easy work of adding FROM but is only compatible with DuckDB SQL.
-    if f'from {st.session_state.con_register_name}' not in query.lower():
+    # A query that names its own table (hand_expectations) is run as written.
+    if f'from {st.session_state.con_register_name}' not in query.lower() and not query_reads_own_table(query):
         query = f'FROM {st.session_state.con_register_name} ' + query
 
     # Choose query engine based on user preference
@@ -1902,7 +1903,12 @@ def create_sidebar() -> None:
                         if button['title'].lower().strip() == 'ai predictions':
                             st.session_state.ai_predictions_requested = True
                             run_ai_predictions_now()
-                        
+                        elif k == 'Hand_Expectations':
+                            if st.session_state.get('df') is None:
+                                st.warning("Load a game first before calculating hand expectations.")
+                            else:
+                                attach_hand_expectations(get_db_connection(), st.session_state.df, st.session_state.session_id)
+
                         # 4 is arbitrary. clearning conversation so it doesn't become overwhelming to user or ai.
                         # if len(ups) > 4:
                         #     reset_messages()
