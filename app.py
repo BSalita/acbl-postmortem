@@ -1907,7 +1907,7 @@ def create_sidebar() -> None:
                             if st.session_state.get('df') is None:
                                 st.warning("Load a game first before calculating hand expectations.")
                             else:
-                                attach_hand_expectations(get_db_connection(), st.session_state.df, st.session_state.session_id)
+                                attach_hand_expectations(get_db_connection(), st.session_state.df)
 
                         # 4 is arbitrary. clearning conversation so it doesn't become overwhelming to user or ai.
                         # if len(ups) > 4:
