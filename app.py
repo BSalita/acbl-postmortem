@@ -155,7 +155,7 @@ import acbl_club_api_client as club_api
 import acbl_session_predictions
 import streamlitlib # must be placed after sys.path.append. vscode re-format likes to move this to the top
 from mlBridge.mlBridgeLib import pd_options_display, contract_classes, cast_numeric_display_columns # must be placed after sys.path.append. vscode re-format likes to move this to the top
-from mlBridge.mlBridgePostmortemLib import PostmortemBase, attach_hand_expectations, git_build_stamp, query_reads_own_table, scroll_to_report_top_once
+from mlBridge.mlBridgePostmortemLib import PostmortemBase, attach_hand_expectations, git_build_stamp, query_reads_own_table, scroll_to_report_top_once, when_connection_free
 from mlBridge.postmortem_section_help import section_help_for_players
 
 # override pandas display options
@@ -180,7 +180,7 @@ def ShowDataFrameTable(df: Any, key: str, query: Optional[str] = None, show_sql_
     query_engine = st.session_state.get('query_engine', 'DuckDB')
     
     try:
-        result_df = cast_numeric_display_columns(get_db_connection().sql(query).pl())
+        result_df = cast_numeric_display_columns(when_connection_free(lambda: get_db_connection().sql(query).pl()))
         st.text(f"Result is a dataframe of {len(result_df)} rows.")
         if show_sql_query and st.session_state.show_sql_query:
             # Debug: if Pct_NS_Pred exists in result, show stats
@@ -750,7 +750,7 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
     
     # Drop existing table if it exists to prevent schema corruption
     try:
-        con.execute(f"DROP TABLE IF EXISTS {table_name}")
+        when_connection_free(lambda: con.execute(f"DROP TABLE IF EXISTS {table_name}"))
         pass
     except Exception as e:
         pass
@@ -758,7 +758,7 @@ def change_game_state(player_id: str, session_id: str) -> None: # todo: rename t
     assert df.select(pl.col(pl.Object)).is_empty(), f"Found Object columns: {df.select(pl.col(pl.Object)).columns}"
     df = cast_numeric_display_columns(df)
     st.session_state.df = df
-    con.register(table_name, df) # ugh, df['scores_l'] must be previously dropped otherwise this hangs. reason unknown.
+    when_connection_free(lambda: con.register(table_name, df)) # ugh, df['scores_l'] must be previously dropped otherwise this hangs. reason unknown.
     
     # (debug removed)
     
@@ -1155,7 +1155,7 @@ def chat_input_on_submit() -> None:
             try:
                 # Check if DuckDB table is actually registered
                 con = get_db_connection()
-                con.execute(f"DESCRIBE {st.session_state.con_register_name}").fetchall()
+                when_connection_free(lambda: con.execute(f"DESCRIBE {st.session_state.con_register_name}").fetchall())
                 # Table exists, execute queries
                 for i, (prompt,sql_query) in enumerate(st.session_state.sql_queries):
                     ShowDataFrameTable(None, query=sql_query, key=f'user_query_main_doit_{i}')
@@ -1549,12 +1549,12 @@ def run_ai_predictions_now() -> None:
     con = get_db_connection()
     table_name = st.session_state.con_register_name
     try:
-        con.execute(f"DROP TABLE IF EXISTS {table_name}")
+        when_connection_free(lambda: con.execute(f"DROP TABLE IF EXISTS {table_name}"))
     except Exception:
         pass
     assert st.session_state.df.select(pl.col(pl.Object)).is_empty(), f"Found Object columns: {st.session_state.df.select(pl.col(pl.Object)).columns}"
     st.session_state.df = cast_numeric_display_columns(st.session_state.df)
-    con.register(table_name, st.session_state.df)
+    when_connection_free(lambda: con.register(table_name, st.session_state.df))
     # Update schema string
     st.session_state.df_schema_string = create_schema_string(st.session_state.df, con)
     with open('df_schema.sql','w') as f:
